@@ -27,6 +27,7 @@ from scraper.core.builder import ScraperBuilder
 from scraper.core.context import ScraperContext
 from scraper.core.engine import PageResult, ScrapeResult, ScraperEngine
 from scraper.core.session import ScraperSession
+from scraper.utils.reporting import format_result_summary, print_result_summary
 
 __all__ = [
     "ScraperBuilder",
@@ -35,6 +36,8 @@ __all__ = [
     "ScraperSession",
     "PageResult",
     "ScrapeResult",
+    "format_result_summary",
+    "print_result_summary",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
