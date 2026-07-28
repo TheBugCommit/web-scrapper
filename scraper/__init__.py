@@ -29,19 +29,26 @@ from scraper.core.engine import PageResult, ScrapeResult, ScraperEngine
 from scraper.core.session import ScraperSession
 from scraper.events.dispatcher import EventDispatcher
 from scraper.extractors.excel_extractor import ExcelExtractor
+from scraper.storage.criteria import Criteria, FilterOperator, OrderDirection
+from scraper.storage.repository import SQLServerRepository, get_portal_last_date
 from scraper.utils.excel import read_excel_rows
 from scraper.utils.reporting import format_result_summary, print_result_summary
 
 __all__ = [
+    "Criteria",
+    "EventDispatcher",
+    "ExcelExtractor",
+    "FilterOperator",
+    "OrderDirection",
+    "PageResult",
+    "SQLServerRepository",
+    "ScrapeResult",
     "ScraperBuilder",
     "ScraperContext",
     "ScraperEngine",
     "ScraperSession",
-    "PageResult",
-    "ScrapeResult",
-    "EventDispatcher",
-    "ExcelExtractor",
     "format_result_summary",
+    "get_portal_last_date",
     "print_result_summary",
     "read_excel_rows",
 ]
