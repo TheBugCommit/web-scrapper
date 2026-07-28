@@ -9,9 +9,10 @@
 A production-grade Python scraping library that can:
 
 - Log into web portals (HTML form-based login)
+- Perform multi-step declarative DOM form interactions and file download submissions (`FormInteractor`)
 - Navigate through multi-page content (links, pagination)
 - Extract structured data (CSS, XPath)
-- Download files attached to pages
+- Download files attached to pages or triggered via form submits
 - Persist extracted rows to a SQL Server database
 - Handle JavaScript-rendered pages via a real browser
 - Run concurrently without saturating the target server
@@ -43,14 +44,14 @@ The library is designed as a **package** that can be installed (`pip install -e 
 └─────────────────────────┬────────────────────────────────────┘
                           │  ScraperBuilder (fluent API)
                           ▼
-┌──────────────────────────────────────────────────────────────┐
-│                     ScraperEngine (core)                     │
-│   asyncio.Queue worker pool  │  EventDispatcher (observer)   │
-└──┬──────────┬────────────────┬────────────────┬──────────────┘
-   │          │                │                │
-   ▼          ▼                ▼                ▼
-Backend    Auth            Navigators      Extractors      Storage
-(Strategy) (Plugin)        (Plugin list)   (Plugin list)   (Plugin)
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           ScraperEngine (core)                           │
+│   asyncio.Queue worker pool        │      EventDispatcher (observer)     │
+└──┬──────────┬────────────────┬─────────┴──────┬────────────────┬─────────┘
+   │          │                │                │                │
+   ▼          ▼                ▼                ▼                ▼
+Backend    Auth            Interactors     Navigators      Extractors      Storage
+(Strategy) (Plugin)        (Plugin list)   (Plugin list)   (Plugin list)   (Plugin)
    │
    ├── RequestsBackend  (httpx async)
    └── PlaywrightBackend (real browser, JS)
@@ -75,6 +76,9 @@ scraper/
 ├── auth/
 │   ├── base.py              ← AbstractAuthHandler
 │   └── form_auth.py         ← HTML form login (HTTP + Playwright)
+├── interaction/
+│   ├── base.py              ← AbstractPageInteractor + AbstractFormAction
+│   └── form_actions.py      ← FormInteractor + form actions (Select, Checkbox, DownloadSubmit...)
 ├── navigation/
 │   ├── base.py              ← AbstractNavigator
 │   ├── link_navigator.py    ← Follow <a href> links
@@ -116,6 +120,7 @@ ScraperEngine.run()
   └─ 3. Worker pool (max_concurrent coroutines consuming the queue)
           │
           ├─ backend.get(url)          → PageResponse
+          ├─ [interactor.interact(page)]  × N interactors  (DOM manipulation / form submits / downloads)
           ├─ [extractor.extract(page)  → dict]  × N extractors  (merged)
           ├─ storage.save(merged_data)
           └─ [navigator.discover(page) → urls]  × N navigators  (enqueued)
@@ -172,6 +177,19 @@ class OAuthHandler(AbstractAuthHandler):
     async def authenticate(self, backend, context):
         token = await get_oauth_token(...)
         backend.set_cookies({"access_token": token})
+```
+
+### Adding a new Form Action or Interactor
+
+```python
+from scraper.interaction.base import AbstractFormAction
+
+class HoverAction(AbstractFormAction):
+    def __init__(self, selector: str):
+        self.selector = selector
+
+    async def execute(self, page, context):
+        await page.hover(self.selector)
 ```
 
 ### Adding a new Extractor

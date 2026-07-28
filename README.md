@@ -13,6 +13,7 @@
 - ⚡ **Async concurrency** — configurable worker pool via `asyncio.Queue`
 - 🌐 **JS-rendered pages** — Playwright backend (Chromium/Firefox/WebKit)
 - 📄 **CSS & XPath extraction** — flexible rule-based data extraction
+- 🖱️ **Declarative form interactions** — execute multi-step form workflows (dropdowns, checkboxes, clicks, file downloads) via `FormInteractor`
 - 📥 **File downloads** — concurrent file download with extension/pattern filtering
 - 🗄️ **SQL Server storage** — auto-creates tables, supports MERGE (upsert)
 - 🕷️ **Debug crawler** — BFS recursive page map with JSON export
@@ -136,6 +137,39 @@ from scraper.backends import PlaywrightBackend
 PlaywrightBackend(browser="chromium", headless=True, wait_until="networkidle")
 ```
 
+### Declarative Form Interactions & File Download
+
+```python
+from scraper.interaction import (
+    CheckboxAction,
+    DownloadSubmitAction,
+    FormInteractor,
+    SelectAction,
+    UncheckAllAction,
+)
+
+session = (
+    ScraperBuilder()
+    .with_url("https://portal.example.com/export")
+    .with_backend(PlaywrightBackend(headless=False))
+    .with_interaction(
+        FormInteractor(
+            actions=[
+                SelectAction("select[name='modul_id']", value="244425", auto_submit=True),
+                SelectAction("select[name='dateTrunc']", "hour"),
+                UncheckAllAction("input[type='checkbox'][name='channelList']"),
+                CheckboxAction("input[name='channelList'][value='EAN000']", checked=True),
+                DownloadSubmitAction(
+                    selector="input[type='submit'][name='createLink']",
+                    download_dir="downloads",
+                ),
+            ]
+        )
+    )
+    .build()
+)
+```
+
 ### Debug crawler
 
 ```bash
@@ -187,19 +221,19 @@ This library is designed following **SOLID** principles and **Design Patterns** 
 ### 1. Layered Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                      User / Examples                         │
-└─────────────────────────┬────────────────────────────────────┘
-                          │  ScraperBuilder (Fluent API)
-                          ▼
-┌──────────────────────────────────────────────────────────────┐
-│                     ScraperEngine (Core)                     │
-│  asyncio.Queue (Work Queue)      │  EventDispatcher (Hook)   │
-└──┬──────────┬────────────────┬────────────────┬──────────────┘
-   │          │                │                │
-   ▼          ▼                ▼                ▼
-Backend    Auth            Navigators      Extractors      Storage
-(Strategy) (Plugin)        (List)          (List)          (Plugin)
+┌──────────────────────────────────────────────────────────────────────────┐
+│                             User / Examples                              │
+└────────────────────────────┬─────────────────────────────────────────────┘
+                             │  ScraperBuilder (Fluent API)
+                             ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           ScraperEngine (Core)                           │
+│      asyncio.Queue (Work Queue)        │      EventDispatcher (Hook)     │
+└──┬──────────┬────────────────┬─────────┴──────┬────────────────┬─────────┘
+   │          │                │                │                │
+   ▼          ▼                ▼                ▼                ▼
+Backend    Auth            Interactors     Navigators      Extractors      Storage
+(Strategy) (Plugin)        (Plugin list)   (Plugin list)   (Plugin list)   (Plugin)
 ```
 
 - **Core (`scraper/core/`)**:
@@ -211,6 +245,7 @@ Backend    Auth            Navigators      Extractors      Storage
   - `PlaywrightBackend`: Controls real browsers (Chromium, Firefox, WebKit) for dynamic JavaScript-rendered sites or SPAs.
 - **Modular Strategies**:
   - **Authentication (`scraper/auth/`)**: `FormAuthHandler` automates login (handling CSRF tokens and checking success selectors).
+  - **Interaction (`scraper/interaction/`)**: `FormInteractor` and declarative form actions (`SelectAction`, `CheckboxAction`, `DownloadSubmitAction`, etc.) execute DOM manipulations, form fills, dropdown auto-submits, and file downloads cleanly before data extraction.
   - **Navigation (`scraper/navigation/`)**: `LinkNavigator` and `PaginationNavigator` discover new URLs to traverse the target portal autonomously.
   - **Extraction (`scraper/extractors/`)**: `CSSExtractor`, `XPathExtractor`, or `FileDownloader` process DOM content to extract structured data.
   - **Storage (`scraper/storage/`)**: `SQLServerStorage` asynchronously saves scraped rows to SQL Server using SQLAlchemy and a `pyodbc` thread pool (with MERGE/upsert support).
@@ -223,6 +258,7 @@ Backend    Auth            Navigators      Extractors      Storage
 3. **Async Workers**: A pool of worker coroutines processes URLs in parallel:
    - Enforces per-host rate limits (`PerHostRateLimiter`).
    - Fetches the page via `backend.get(url) -> PageResponse`.
+   - Runs **Interactors** (`FormInteractor`) to perform declarative DOM actions (selecting dropdowns, toggling checkboxes, submitting forms, or capturing downloaded files).
    - Runs **Extractors** to parse dictionary data and sends it to **Storage** (`storage.save(data)`).
    - Runs **Navigators** to inspect the page, discover new URLs (e.g., next page), and push them back into the queue.
 4. **Completion**: Once all URLs in the queue are processed, the backend is closed, and an aggregate `ScrapeResult` is returned.
@@ -237,6 +273,7 @@ session = (
     .with_url("https://portal.example.com")
     .with_backend(RequestsBackend(timeout=30.0))
     .with_auth(FormAuthHandler(...))
+    .with_interaction(FormInteractor(...))
     .with_navigator(PaginationNavigator(next_selector="a[rel=next]"))
     .with_extractor(CSSExtractor(rules={"title": "h1"}))
     .with_storage(SQLServerStorage.from_env())
@@ -251,6 +288,7 @@ result = await ScraperEngine(session).run()
 The library follows the **Open/Closed** principle: no extension requires modifying core code (`core/`). Simply subclass the corresponding Abstract Base Class (ABC) in its category directory:
 
 - **New Auth Handler**: Subclass `AbstractAuthHandler` (`scraper/auth/base.py`) and implement `async def authenticate(self, backend, context)`.
+- **New Form Action or Interactor**: Subclass `AbstractFormAction` or `AbstractPageInteractor` (`scraper/interaction/base.py`) to encapsulate custom browser interaction patterns.
 - **New Extractor** (e.g., JSON or PDF): Subclass `AbstractExtractor` (`scraper/extractors/base.py`) and implement `async def extract(self, page)`.
 - **New Storage Sink** (e.g., CSV or PostgreSQL): Subclass `AbstractStorage` (`scraper/storage/base.py`) and implement `async def save(self, data)`.
 - **New Navigator**: Subclass `AbstractNavigator` (`scraper/navigation/base.py`) and implement `async def discover(self, page, context)`.
@@ -272,6 +310,13 @@ pytest tests/unit/
 
 ```
 scraper/          ← installable library package
+  auth/           ← authentication strategies
+  backends/       ← HTTP & Playwright browser backends
+  core/           ← engine, builder, session, context
+  extractors/     ← CSS, XPath & file download extractors
+  interaction/    ← FormInteractor & declarative form/download actions
+  navigation/     ← LinkNavigator & pagination
+  storage/        ← SQL Server storage sink
 examples/         ← runnable usage examples
 tests/
   unit/           ← fast tests, no network
