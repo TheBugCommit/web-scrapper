@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from scraper.auth.form_auth import FormAuthHandler
+    from scraper.storage.sqlserver_storage import SQLServerStorage
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,9 @@ class PortalConfig:
     password_field: str = "password"
     success_selector: str = ""
     headless: bool = True
+    db_table: str | None = None
+    db_schema: str = "dbo"
+    db_upsert_key: str | list[str] | None = None
     extra: dict = field(default_factory=dict, hash=False, compare=False)
 
     def form_auth(self) -> "FormAuthHandler":
@@ -69,6 +73,32 @@ class PortalConfig:
             username_field=self.username_field,
             password_field=self.password_field,
             success_selector=self.success_selector,
+        )
+
+    def get_storage(self, connection_string: str | None = None) -> "SQLServerStorage":
+        """Return a configured SQLServerStorage for this portal's table.
+
+        Uses connection_string if passed, otherwise falls back to
+        SCRAPER_DB_CONNECTION_STRING from the environment.
+        """
+        import os
+        from scraper.storage.sqlserver_storage import SQLServerStorage
+
+        conn_str = connection_string or os.getenv("SCRAPER_DB_CONNECTION_STRING")
+        if not conn_str:
+            raise ValueError(
+                "No SQL Server connection string provided and SCRAPER_DB_CONNECTION_STRING "
+                "is not set in the environment."
+            )
+        table = self.db_table or "scraped_data"
+        schema = self.db_schema or "dbo"
+        upsert_key = self.db_upsert_key
+
+        return SQLServerStorage(
+            connection_string=conn_str,
+            table=table,
+            upsert_key=upsert_key,
+            schema_prefix=schema,
         )
 
     def __repr__(self) -> str:  # hide password from repr / logs

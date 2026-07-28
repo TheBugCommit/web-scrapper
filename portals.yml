@@ -33,12 +33,18 @@ portals:
     password_field:   "Passwort"
     success_selector: "#body_allModulesTankOverview"
 
-    # Browser options
-    headless: false           # true in production
-
     # ── Portal-specific extras (accessible via portal.extra["..."])  ──────────
     export_url: "https://www.global-datacenter.de/web/export/xls.html"
     module_id:  "244425"      # Balfegó module
+
+    # Browser options
+    headless: false           # true in production
+
+    # SQL Server target table configuration
+    db_table:      "Telemetria_Tanque_N"
+    db_schema:     "dbo"
+    db_upsert_key: "timestamp"
+
 
   # ── Template for adding a new portal ─────────────────────────────────────────
   # example_portal:
@@ -49,6 +55,9 @@ portals:
   #   password_field: "password"
   #   success_selector: ".dashboard"
   #   headless: true
+  #   db_table:      "Telemetria_Tanque_N"
+  #   db_schema:     "dbo"
+  #   db_upsert_key: "timestamp"
   #   # Add credentials to .env.portals:
   #   #   EXAMPLE_PORTAL_USERNAME=myuser
   #   #   EXAMPLE_PORTAL_PASSWORD=mypass

@@ -241,6 +241,17 @@ async def on_page(payload):
 def on_data(payload):
     print(f"Data: {payload['data']}")
 
+@dispatcher.on("file.downloaded")
+def on_download(payload):
+    print(f"Downloaded: {payload['path']} ({payload['size_bytes']} bytes)")
+
+@dispatcher.on("storage.saved")
+def on_saved(payload):
+    print(
+        f"Upserted {payload['rows']} rows to SQL Server "
+        f"[{payload['schema']}].[{payload['table']}]!"
+    )
+
 engine = ScraperEngine(session, dispatcher=dispatcher)
 ```
 

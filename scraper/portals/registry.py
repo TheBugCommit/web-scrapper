@@ -51,6 +51,7 @@ _KNOWN_KEYS = frozenset({
     "name", "portal_url", "login_url",
     "username_field", "password_field",
     "success_selector", "headless",
+    "db_table", "db_schema", "db_upsert_key",
 })
 
 

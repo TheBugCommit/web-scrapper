@@ -9,17 +9,20 @@ custom side-effects can be implemented without modifying the core.
 
 Built-in events
 ---------------
-=======================  =========================================
+=======================  ==============================================================
 Event name               Payload keys
-=======================  =========================================
+=======================  ==============================================================
 ``auth.success``         ``context``
 ``page.loaded``          ``url``, ``status``
 ``page.error``           ``url``, ``error``
 ``data.extracted``       ``url``, ``data``
 ``file.downloaded``      ``url``, ``path``, ``size_bytes``
+``storage.saved``        ``url``, ``rows``, ``table``, ``schema``, ``upsert_key``
+``storage.skipped``      ``url``, ``rows``, ``table``, ``schema``, ``reason``
+``storage.error``        ``url``, ``table``, ``schema``, ``error``
 ``run.started``          ``start_urls``, ``max_concurrent``
 ``run.finished``         ``pages``, ``errors``, ``duration``
-=======================  =========================================
+=======================  ==============================================================
 
 Example::
 

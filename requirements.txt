@@ -17,6 +17,11 @@ pyodbc==5.1.0
 python-dotenv==1.0.1
 pyyaml==6.0.2
 
+# Spreadsheet / Excel extraction
+pandas>=2.2.0
+xlrd>=2.0.1
+openpyxl>=3.1.0
+
 # Resilience
 tenacity==8.3.0
 

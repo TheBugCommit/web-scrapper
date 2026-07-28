@@ -27,6 +27,9 @@ from scraper.core.builder import ScraperBuilder
 from scraper.core.context import ScraperContext
 from scraper.core.engine import PageResult, ScrapeResult, ScraperEngine
 from scraper.core.session import ScraperSession
+from scraper.events.dispatcher import EventDispatcher
+from scraper.extractors.excel_extractor import ExcelExtractor
+from scraper.utils.excel import read_excel_rows
 from scraper.utils.reporting import format_result_summary, print_result_summary
 
 __all__ = [
@@ -36,8 +39,11 @@ __all__ = [
     "ScraperSession",
     "PageResult",
     "ScrapeResult",
+    "EventDispatcher",
+    "ExcelExtractor",
     "format_result_summary",
     "print_result_summary",
+    "read_excel_rows",
 ]
 
 __version__ = "0.2.0"

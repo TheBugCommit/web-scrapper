@@ -25,6 +25,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import urllib.parse
 from functools import partial
 from typing import Any
 
@@ -50,6 +52,101 @@ _TYPE_MAP: dict[type, str] = {
 _DEFAULT_COL_TYPE = "NVARCHAR(MAX)"
 
 
+def normalise_sqlserver_connection_string(
+    conn_str: str, default_db: str = "Reporting_Test"
+) -> str:
+    """Convert any SQL Server connection string (SSMS, ADO.NET, or SQLAlchemy URL) into a bulletproof odbc_connect URL."""
+    if "://" in conn_str and not conn_str.startswith("mssql"):
+        return conn_str
+
+    if "odbc_connect=" in conn_str:
+        return conn_str
+
+    server = "localhost"
+    user = ""
+    password = ""
+    database = default_db
+    driver = ""
+
+    if "://" in conn_str:
+        parsed = urllib.parse.urlsplit(conn_str)
+        if parsed.username:
+            user = urllib.parse.unquote(parsed.username)
+        if parsed.password:
+            password = urllib.parse.unquote(parsed.password)
+        if parsed.hostname:
+            server = urllib.parse.unquote(parsed.hostname)
+            server = server.replace("%5C", "\\").replace("%5c", "\\")
+        if parsed.path and len(parsed.path) > 1:
+            database = parsed.path.lstrip("/")
+        query = urllib.parse.parse_qs(parsed.query)
+        if "driver" in query:
+            driver = query["driver"][0].replace("+", " ")
+    else:
+        parts = [p.strip() for p in conn_str.split(";") if p.strip()]
+        kv: dict[str, str] = {}
+        for part in parts:
+            if "=" in part:
+                k, v = part.split("=", 1)
+                kv[k.strip().lower()] = v.strip()
+
+        server = (
+            kv.get("data source")
+            or kv.get("server")
+            or kv.get("addr")
+            or "localhost"
+        )
+        user = kv.get("user id") or kv.get("uid") or kv.get("user") or ""
+        password = kv.get("password") or kv.get("pwd") or ""
+        database = (
+            kv.get("initial catalog")
+            or kv.get("database")
+            or kv.get("catalog")
+            or default_db
+        )
+        driver = kv.get("driver", "")
+        if driver and driver.startswith("{") and driver.endswith("}"):
+            driver = driver[1:-1]
+
+    try:
+        import pyodbc
+
+        installed = pyodbc.drivers()
+        if not driver or driver not in installed:
+            for preferred in [
+                "ODBC Driver 18 for SQL Server",
+                "ODBC Driver 17 for SQL Server",
+                "SQL Server Native Client 11.0",
+                "SQL Server",
+            ]:
+                if preferred in installed:
+                    driver = preferred
+                    break
+            if not driver and installed:
+                driver = installed[0]
+    except Exception:
+        driver = driver or "ODBC Driver 18 for SQL Server"
+
+    odbc_parts = [
+        f"DRIVER={{{driver}}}",
+        f"SERVER={server}",
+        f"DATABASE={database}",
+    ]
+    if user and password:
+        odbc_parts.append(f"UID={user}")
+        odbc_parts.append(f"PWD={password}")
+    else:
+        odbc_parts.append("Trusted_Connection=yes")
+
+    odbc_parts.append("Encrypt=no")
+    odbc_parts.append("TrustServerCertificate=yes")
+
+    odbc_str = ";".join(odbc_parts) + ";"
+    encoded = urllib.parse.quote_plus(odbc_str)
+    return f"mssql+pyodbc:///?odbc_connect={encoded}"
+
+
+
 class SQLServerStorage(AbstractStorage):
     """Async SQL Server storage sink.
 
@@ -69,12 +166,12 @@ class SQLServerStorage(AbstractStorage):
         self,
         connection_string: str,
         table: str,
-        upsert_key: str | None = None,
+        upsert_key: str | list[str] | None = None,
         auto_create_table: bool = True,
         schema_prefix: str = "dbo",
         extra_columns: dict[str, Any] | None = None,
     ) -> None:
-        self._conn_str = connection_string
+        self._conn_str = normalise_sqlserver_connection_string(connection_string)
         self._table = table
         self._upsert_key = upsert_key
         self._auto_create = auto_create_table
@@ -87,14 +184,16 @@ class SQLServerStorage(AbstractStorage):
     # ── Factory ───────────────────────────────────────────────────────────
 
     @classmethod
-    def from_env(cls) -> "SQLServerStorage":
-        """Instantiate from environment variables.
+    def from_env(
+        cls,
+        table: str = "scraped_data",
+        upsert_key: str | list[str] | None = None,
+        schema_prefix: str = "dbo",
+    ) -> "SQLServerStorage":
+        """Instantiate using SCRAPER_DB_CONNECTION_STRING from environment variables.
 
-        Reads::
-            SCRAPER_DB_CONNECTION_STRING  (required)
-            SCRAPER_DB_TABLE              (default: scraped_data)
-            SCRAPER_DB_UPSERT_KEY         (optional)
-            SCRAPER_DB_SCHEMA             (default: dbo)
+        Table name, upsert key, and schema are passed explicitly (typically
+        loaded per-portal from portals.yml via portal.get_storage()).
         """
         conn = os.environ.get("SCRAPER_DB_CONNECTION_STRING", "")
         if not conn:
@@ -104,9 +203,9 @@ class SQLServerStorage(AbstractStorage):
             )
         return cls(
             connection_string=conn,
-            table=os.environ.get("SCRAPER_DB_TABLE", "scraped_data"),
-            upsert_key=os.environ.get("SCRAPER_DB_UPSERT_KEY") or None,
-            schema_prefix=os.environ.get("SCRAPER_DB_SCHEMA", "dbo"),
+            table=table,
+            upsert_key=upsert_key,
+            schema_prefix=schema_prefix,
         )
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
@@ -194,15 +293,17 @@ class SQLServerStorage(AbstractStorage):
         self._table_created = True
 
     def _serialise_row(self, row: dict[str, Any]) -> dict[str, Any]:
-        """Convert complex types to JSON strings for SQL Server compatibility."""
+        """Convert complex types to JSON strings and normalize timestamps for SQL Server DATETIMEOFFSET compatibility."""
         result: dict[str, Any] = {}
         for k, v in row.items():
             if isinstance(v, (list, dict)):
                 result[k] = json.dumps(v, ensure_ascii=False, default=str)
-            elif v is None or isinstance(v, (str, int, float, bool)):
+            elif v is None or isinstance(v, (int, float, bool)):
                 result[k] = v
+            elif isinstance(v, str):
+                result[k] = re.sub(r"([+-]\d{2})$", r"\1:00", v.strip())
             else:
-                result[k] = str(v)
+                result[k] = re.sub(r"([+-]\d{2})$", r"\1:00", str(v).strip())
         return result
 
     def _sync_save(self, row: dict[str, Any]) -> None:
@@ -216,7 +317,7 @@ class SQLServerStorage(AbstractStorage):
         with engine.begin() as conn:
             self._ensure_table(conn, row)
 
-            if self._upsert_key and self._upsert_key in row:
+            if self._has_upsert_key(row):
                 self._merge(conn, full_table, row)
             else:
                 self._insert(conn, full_table, row)
@@ -234,10 +335,17 @@ class SQLServerStorage(AbstractStorage):
         with engine.begin() as conn:
             self._ensure_table(conn, rows[0])
             for row in rows:
-                if self._upsert_key and self._upsert_key in row:
+                if self._has_upsert_key(row):
                     self._merge(conn, full_table, row)
                 else:
                     self._insert(conn, full_table, row)
+
+    def _has_upsert_key(self, row: dict[str, Any]) -> bool:
+        if not self._upsert_key:
+            return False
+        if isinstance(self._upsert_key, str):
+            return self._upsert_key in row
+        return all(k in row for k in self._upsert_key)
 
     def _insert(self, conn: Any, full_table: str, row: dict[str, Any]) -> None:
         cols = ", ".join(f"[{c}]" for c in row)
@@ -246,15 +354,19 @@ class SQLServerStorage(AbstractStorage):
         conn.execute(sql, row)
 
     def _merge(self, conn: Any, full_table: str, row: dict[str, Any]) -> None:
-        """SQL Server MERGE (upsert) on the configured upsert key."""
-        key = self._upsert_key
-        other_cols = [c for c in row if c != key]
+        """SQL Server MERGE (upsert) on the configured upsert key(s)."""
+        keys = [self._upsert_key] if isinstance(self._upsert_key, str) else list(self._upsert_key or [])
+        other_cols = [c for c in row if c not in keys]
+
+        on_clause = " AND ".join(f"target.[{k}] = source.[{k}]" for k in keys)
 
         if not other_cols:
-            # Only key column — just insert if not exists
+            # Only key column(s) — just insert if not exists
+            where_clause = " AND ".join(f"[{k}] = :{k}" for k in keys)
             sql = text(
-                f"IF NOT EXISTS (SELECT 1 FROM {full_table} WHERE [{key}] = :{key}) "
-                f"INSERT INTO {full_table} ([{key}]) VALUES (:{key})"
+                f"IF NOT EXISTS (SELECT 1 FROM {full_table} WHERE {where_clause}) "
+                f"INSERT INTO {full_table} ({', '.join(f'[{k}]' for k in keys)}) "
+                f"VALUES ({', '.join(f':{k}' for k in keys)})"
             )
             conn.execute(sql, row)
             return
@@ -267,7 +379,7 @@ class SQLServerStorage(AbstractStorage):
         sql_text = (
             f"MERGE {full_table} AS target "
             f"USING (SELECT {source_cols}) AS source "
-            f"ON target.[{key}] = source.[{key}] "
+            f"ON {on_clause} "
             f"WHEN MATCHED THEN UPDATE SET {update_set} "
             f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals});"
         )

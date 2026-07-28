@@ -19,6 +19,7 @@ listeners (logging, monitoring) can hook in without coupling to the engine.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -94,29 +95,35 @@ class ScraperEngine:
         start = time.monotonic()
 
         async with backend:
-            # ── 1. Authenticate ───────────────────────────────────────
-            if self._session.auth is not None:
-                logger.debug("🔐 Authenticating…")
-                await self._session.auth.authenticate(backend, ctx)
-                await self._dispatcher.emit("auth.success", {"context": ctx})
+            if self._session.storage is not None:
+                await self._session.storage.open()
+            try:
+                # ── 1. Authenticate ───────────────────────────────────────
+                if self._session.auth is not None:
+                    logger.debug("🔐 Authenticating…")
+                    await self._session.auth.authenticate(backend, ctx)
+                    await self._dispatcher.emit("auth.success", {"context": ctx})
 
-            # ── 2. Seed the queue ─────────────────────────────────────
-            for url in self._session.start_urls:
-                normalised = normalise(url)
-                self._visited.add(normalised)
-                await self._queue.put(normalised)
+                # ── 2. Seed the queue ─────────────────────────────────────
+                for url in self._session.start_urls:
+                    normalised = normalise(url)
+                    self._visited.add(normalised)
+                    await self._queue.put(normalised)
 
-            # ── 3. Launch worker pool ─────────────────────────────────
-            workers = [
-                asyncio.create_task(self._worker(worker_id=i))
-                for i in range(ctx.max_concurrent)
-            ]
+                # ── 3. Launch worker pool ─────────────────────────────────
+                workers = [
+                    asyncio.create_task(self._worker(worker_id=i))
+                    for i in range(ctx.max_concurrent)
+                ]
 
-            # Wait for the queue to drain, then cancel workers
-            await self._queue.join()
-            for w in workers:
-                w.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
+                # Wait for the queue to drain, then cancel workers
+                await self._queue.join()
+                for w in workers:
+                    w.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
+            finally:
+                if self._session.storage is not None:
+                    await self._session.storage.close()
 
         self._result.duration_seconds = time.monotonic() - start
         logger.info(
@@ -178,6 +185,12 @@ class ScraperEngine:
         if downloads:
             merged_data["_downloads"] = downloads
             logger.info("  Downloads: %s", downloads)
+            for dl_path in downloads:
+                size_bytes = os.path.getsize(dl_path) if os.path.exists(dl_path) else 0
+                await self._dispatcher.emit(
+                    "file.downloaded",
+                    {"url": url, "path": dl_path, "size_bytes": size_bytes},
+                )
 
         for extractor in session.extractors:
             extracted = await extractor.extract(response)
@@ -189,7 +202,63 @@ class ScraperEngine:
 
         # ── Store ──────────────────────────────────────────────────────────
         if session.storage is not None and merged_data:
-            await session.storage.save(merged_data)
+            table = getattr(session.storage, "_table", "unknown")
+            schema = getattr(session.storage, "_schema", "")
+            upsert_key = getattr(session.storage, "_upsert_key", None)
+            try:
+                rows = merged_data.get("_rows")
+                if isinstance(rows, list):
+                    if not rows:
+                        await self._dispatcher.emit(
+                            "storage.skipped",
+                            {
+                                "url": url,
+                                "rows": 0,
+                                "table": table,
+                                "schema": schema,
+                                "reason": "empty_records",
+                                "status": "skipped",
+                            },
+                        )
+                    else:
+                        await session.storage.save_many(rows)
+                        await self._dispatcher.emit(
+                            "storage.saved",
+                            {
+                                "url": url,
+                                "rows": len(rows),
+                                "table": table,
+                                "schema": schema,
+                                "upsert_key": upsert_key,
+                                "status": "saved",
+                            },
+                        )
+                else:
+                    await session.storage.save(merged_data)
+                    await self._dispatcher.emit(
+                        "storage.saved",
+                        {
+                            "url": url,
+                            "rows": 1,
+                            "table": table,
+                            "schema": schema,
+                            "upsert_key": upsert_key,
+                            "status": "saved",
+                        },
+                    )
+            except Exception as exc:
+                await self._dispatcher.emit(
+                    "storage.error",
+                    {
+                        "url": url,
+                        "table": table,
+                        "schema": schema,
+                        "error": str(exc),
+                        "status": "error",
+                    },
+                )
+                logger.error("ScraperEngine: storage error for %s — %s", url, exc)
+                raise
 
         # ── Discover next URLs ─────────────────────────────────────────────
         for navigator in session.navigators:
