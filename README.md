@@ -14,6 +14,8 @@
 - 🌐 **JS-rendered pages** — Playwright backend (Chromium/Firefox/WebKit)
 - 📄 **CSS & XPath extraction** — flexible rule-based data extraction
 - 🖱️ **Declarative form interactions** — execute multi-step form workflows (dropdowns, checkboxes, clicks, file downloads) via `FormInteractor`
+- 🗂️ **Dynamic Portal Registry** — multi-portal YAML configuration (`portals.yml`) separated from gitignored credentials (`.env.portals`)
+- 📜 **Rotating file logs** — automatic rotating file logs (`logs/scraper.log` & `logs/error.log`) alongside rich colorised console output
 - 📥 **File downloads** — concurrent file download with extension/pattern filtering
 - 🗄️ **SQL Server storage** — auto-creates tables, supports MERGE (upsert)
 - 🕷️ **Debug crawler** — BFS recursive page map with JSON export
@@ -61,7 +63,37 @@ SCRAPER_MAX_CONCURRENT=5
 SCRAPER_RATE_LIMIT_DELAY=1.0
 SCRAPER_DEBUG=false
 SCRAPER_HEADLESS=true
+
+# Rotating Logs
+SCRAPER_LOG_ENABLED=true
+SCRAPER_LOG_DIR=./logs
+SCRAPER_LOG_MAX_BYTES=10485760
+SCRAPER_LOG_BACKUPS=5
 ```
+
+### Multi-Portal Configuration (`portals.yml` & `.env.portals`)
+
+The library separates portal metadata from sensitive credentials:
+
+1. **`portals.yml`** (Safe to commit to Git): Defines portal metadata, URLs, CSS selectors, and custom parameters.
+2. **`.env.portals`** (Gitignored): Stores credentials using the naming convention `<PORTAL_KEY_UPPERCASE>_USERNAME` and `<PORTAL_KEY_UPPERCASE>_PASSWORD`.
+
+```python
+from scraper.portals import PortalRegistry
+
+registry = PortalRegistry.load()
+portal = registry.get("messer")
+
+# Generates an authenticated FormAuthHandler automatically
+auth_handler = portal.form_auth()
+```
+
+### Rotating Log Files
+
+When `SCRAPER_LOG_ENABLED=true`, the engine automatically generates UTF-8 rotating file logs inside `SCRAPER_LOG_DIR` (`./logs` by default):
+
+- **`scraper.log`**: Records all execution outputs and events at the configured log level (`INFO` or `DEBUG`).
+- **`error.log`**: Records only `ERROR` and `CRITICAL` messages for immediate troubleshooting.
 
 ---
 

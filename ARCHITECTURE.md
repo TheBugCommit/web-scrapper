@@ -76,6 +76,9 @@ scraper/
 ├── auth/
 │   ├── base.py              ← AbstractAuthHandler
 │   └── form_auth.py         ← HTML form login (HTTP + Playwright)
+├── portals/
+│   ├── config.py            ← PortalConfig dataclass + form_auth() factory
+│   └── registry.py          ← PortalRegistry (YAML + .env.portals merging)
 ├── interaction/
 │   ├── base.py              ← AbstractPageInteractor + AbstractFormAction
 │   └── form_actions.py      ← FormInteractor + form actions (Select, Checkbox, DownloadSubmit...)
@@ -99,7 +102,7 @@ scraper/
 │   └── rate_limiter.py      ← Per-host async rate limiter
 └── utils/
     ├── url.py               ← URL normalisation / link extraction
-    └── logging.py           ← Rich-based structured logging
+    └── logging.py           ← Rich console + RotatingFileHandler logs (scraper.log & error.log)
 ```
 
 ---
@@ -303,3 +306,22 @@ playwright install chromium
 # SQL Server ODBC driver (Windows)
 # Download from: https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server
 ```
+
+---
+
+## 13. Portal Registry Pattern (`scraper.portals`)
+
+To support multi-portal environments cleanly without code modification or committing sensitive credentials:
+
+- **`portals.yml` (Git-tracked)**: Contains portal metadata, login URLs, target form field names, and custom properties (e.g. `export_url`, `module_id`).
+- **`.env.portals` (Gitignored)**: Contains authentication credentials (`<KEY_UPPERCASE>_USERNAME` and `PASSWORD`).
+- **`PortalRegistry`**: Loads `portals.yml`, merges with `.env.portals` at runtime, and exposes a factory `.form_auth()` that returns a fully configured `FormAuthHandler`.
+
+---
+
+## 14. Rotating Logging Architecture (`scraper.utils.logging`)
+
+All scraper activity is logged via structured `rich` console handlers and automatic rotating file logs:
+
+- **`scraper.log`**: Captures all logs from `INFO` / `DEBUG` upwards. Configurable via `SCRAPER_LOG_MAX_BYTES` (default 10 MB) and `SCRAPER_LOG_BACKUPS` (default 5).
+- **`error.log`**: Dedicated log stream for `ERROR` and `CRITICAL` entries only, enabling rapid detection and auditing of navigation, authentication, or selector failures without scanning noisy info logs.
