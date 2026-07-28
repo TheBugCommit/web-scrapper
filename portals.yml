@@ -1,0 +1,54 @@
+# portals.yml
+# ============
+# Portal definitions — SAFE TO COMMIT TO GIT.
+# This file contains configuration, URLs, and selectors — NO credentials.
+#
+# Credentials are stored in .env.portals (gitignored).
+# Convention for env vars / .env.portals:
+#   <PORTAL_KEY_UPPERCASE>_USERNAME=...
+#   <PORTAL_KEY_UPPERCASE>_PASSWORD=...
+#
+# The PortalRegistry merges this file with the credentials at runtime.
+#
+# Usage in Python:
+#   from scraper.portals import PortalRegistry
+#   registry = PortalRegistry.load()
+#   portal   = registry.get("messer")
+#   auth     = portal.form_auth()           # returns a FormAuthHandler
+#   url      = portal.extra["export_url"]   # portal-specific extras
+#
+# To add a new portal: add a new key under `portals:` and add its credentials
+# to .env.portals.  No code changes needed in the library.
+# ─────────────────────────────────────────────────────────────────────────────
+
+portals:
+
+  messer:
+    name: "Messer / Global Datacenter"
+    portal_url: "https://www.global-datacenter.de/index.html"
+    login_url:  "https://www.global-datacenter.de/index.html"
+
+    # HTML form field selectors
+    username_field:   "Kennung"
+    password_field:   "Passwort"
+    success_selector: "#body_allModulesTankOverview"
+
+    # Browser options
+    headless: false           # true in production
+
+    # ── Portal-specific extras (accessible via portal.extra["..."])  ──────────
+    export_url: "https://www.global-datacenter.de/web/export/xls.html"
+    module_id:  "244425"      # Balfegó module
+
+  # ── Template for adding a new portal ─────────────────────────────────────────
+  # example_portal:
+  #   name: "Example Portal"
+  #   portal_url: "https://portal.example.com"
+  #   login_url:  "https://portal.example.com/login"
+  #   username_field: "email"
+  #   password_field: "password"
+  #   success_selector: ".dashboard"
+  #   headless: true
+  #   # Add credentials to .env.portals:
+  #   #   EXAMPLE_PORTAL_USERNAME=myuser
+  #   #   EXAMPLE_PORTAL_PASSWORD=mypass

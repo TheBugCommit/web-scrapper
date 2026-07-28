@@ -52,12 +52,14 @@ dmypy.json
 # ── Environment / secrets ──────────────────────────────────────────────────────
 .env
 .env.local
-# Keep .env.example, .env.test and .env.production in version control
-# but exclude any files that contain real credentials (e.g. .env.production.local)
+# Keep .env.example, .env.test, .env.production and .env.portals.example in git
+# but exclude files with real credentials
 .env.*.local
 *.local.env
 # Internal tracker used by switch-env.ps1
 .env.active
+# Portal credentials (see .env.portals.example for format)
+.env.portals
 
 # ── IDE / editors ─────────────────────────────────────────────────────────────
 .vscode/

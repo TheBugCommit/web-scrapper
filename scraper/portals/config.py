@@ -1,0 +1,79 @@
+"""
+scraper.portals.config
+~~~~~~~~~~~~~~~~~~~~~~
+``PortalConfig`` — immutable descriptor for one web portal.
+
+Contains everything needed to connect to a portal (URLs, field selectors,
+browser options) and the credentials loaded from the secrets file
+(never committed to version control).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from scraper.auth.form_auth import FormAuthHandler
+
+
+@dataclass(frozen=True)
+class PortalConfig:
+    """Descriptor for one web portal with merged public config + credentials.
+
+    Attributes:
+        key:              Unique identifier used as the YAML key and as the
+                          env-var prefix (``{KEY_UPPER}_USERNAME`` / ``_PASSWORD``).
+        name:             Human-readable display name.
+        portal_url:       Main URL of the portal (also the scraper's start URL).
+        login_url:        URL of the HTML login form.
+        username:         Credential — loaded from ``.env.portals``, never YAML.
+        password:         Credential — loaded from ``.env.portals``, never YAML.
+        username_field:   CSS ``name`` attribute of the username input.
+        password_field:   CSS ``name`` attribute of the password input.
+        success_selector: CSS selector that appears only after a successful login.
+        headless:         Whether Playwright should run in headless mode.
+        extra:            Arbitrary portal-specific values (export URLs, IDs, etc.)
+                          defined freely in ``portals.yml`` and accessed via
+                          ``portal.extra["key"]``.
+    """
+
+    key: str
+    name: str
+    portal_url: str
+    login_url: str
+    username: str
+    password: str
+    username_field: str = "username"
+    password_field: str = "password"
+    success_selector: str = ""
+    headless: bool = True
+    extra: dict = field(default_factory=dict, hash=False, compare=False)
+
+    def form_auth(self) -> "FormAuthHandler":
+        """Return a ready-to-use :class:`~scraper.auth.form_auth.FormAuthHandler`.
+
+        Example::
+
+            portal = registry.get("messer")
+            session = ScraperBuilder()\\
+                .with_auth(portal.form_auth())\\
+                ...
+        """
+        from scraper.auth.form_auth import FormAuthHandler
+
+        return FormAuthHandler(
+            login_url=self.login_url,
+            username=self.username,
+            password=self.password,
+            username_field=self.username_field,
+            password_field=self.password_field,
+            success_selector=self.success_selector,
+        )
+
+    def __repr__(self) -> str:  # hide password from repr / logs
+        return (
+            f"PortalConfig(key={self.key!r}, name={self.name!r}, "
+            f"portal_url={self.portal_url!r}, username={self.username!r}, "
+            f"password='***')"
+        )

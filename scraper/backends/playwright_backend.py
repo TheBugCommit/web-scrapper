@@ -77,7 +77,7 @@ class PlaywrightBackend(AbstractBackend):
             self._browser_type,
             self._headless,
         )
-        self._playwright = await async_playwright().__aenter__()
+        self._playwright = await async_playwright().start()
         launcher = getattr(self._playwright, self._browser_type)
         self._browser = await launcher.launch(
             headless=self._headless,
@@ -97,10 +97,13 @@ class PlaywrightBackend(AbstractBackend):
     async def close(self) -> None:
         if self._context:
             await self._context.close()
+            self._context = None
         if self._browser:
             await self._browser.close()
+            self._browser = None
         if self._playwright:
-            await self._playwright.__aexit__(None, None, None)
+            await self._playwright.stop()
+            self._playwright = None
         logger.debug("PlaywrightBackend: browser closed")
 
     # ── Internal helpers ──────────────────────────────────────────────────
