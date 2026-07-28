@@ -34,6 +34,7 @@ load_dotenv()
 from scraper import (
     EventDispatcher,
     ExcelExtractor,
+    SQLServerRepository,
     ScraperBuilder,
     print_result_summary,
 )
@@ -53,11 +54,19 @@ portal   = registry.get("messer")
 
 DOWNLOAD_DIR = Path(os.getenv("SCRAPER_DOWNLOAD_DIR", "./downloads"))
 
-today = date.today()
-start = today - timedelta(days=2)
-
+async def get_last_date(portal) -> date:
+    async with SQLServerRepository.from_portal(portal) as repo:
+        return await repo.get_last_date(
+            table=portal.db_table or "Telemetria_Tanque_N",
+            date_column="timestamp",
+            schema=portal.db_schema or "dbo",
+            default_date=date(2024, 5, 1),
+        )
 
 async def main() -> None:
+    today = date.today()
+    start = await get_last_date(portal)
+
     print("=" * 60)
     print(f"  {portal.name} - XLS Export")
     print(f"  Portal : {portal.portal_url}")
