@@ -45,6 +45,20 @@ portals:
     db_schema:     "dbo"
     db_upsert_key: "timestamp"
 
+  carburos_metalicos:
+    name: "Carburos Metalicos"
+    portal_url: "https://account.airproducts.com/login?ReturnUrl=https://apdirect.airproducts.com/Tanks%2F"
+    login_url:  "https://account.airproducts.com/login?ReturnUrl=https://apdirect.airproducts.com/Tanks%2F"
+    username_field: "username"
+    password_field: "password"
+    submit_selector: "button.button--default, [type=submit], button"
+    success_selector: ".app-container"
+    export_url: "https://apdirect.airproducts.com/Tanks/Readings/175738"
+    headless: false
+    db_table:      "Telemetria_Tanque_Co2"
+    db_schema:     "dbo"
+    db_upsert_key: "timestamp"
+
 
   # ── Template for adding a new portal ─────────────────────────────────────────
   # example_portal:
