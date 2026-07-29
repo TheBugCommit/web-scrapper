@@ -59,50 +59,66 @@ Backend    Auth            Interactors     Navigators      Extractors      Stora
 
 ---
 
-## 4. Package Structure
+## 4. Project Structure (Client Portals & Scraper Library)
+
+The codebase is organized into two distinct layers:
 
 ```
-scraper/
-├── __init__.py              ← Public API surface
+portals/                         ← CLIENT APPLICATION / MULTI-PORTAL SCRAPER PROJECTS
+├── config/
+│   ├── __init__.py              ← Automatically loads portals/.env
+│   ├── models.py                ← PortalConfig dataclass + get_builder() helper
+│   ├── registry.py              ← PortalRegistry loader (YAML metadata + YAML secrets)
+│   ├── portals.yml              ← Public portal metadata (URLs, CSS selectors)
+│   └── portals_credentials.yml  ← Gitignored portal secrets (username, password, api_key)
+├── messer/
+│   └── flow.py                  ← Messer (Global Datacenter) XLS export scraper
+├── carburos_metalicos/
+│   └── flow.py                  ← Carburos Metálicos CSV telemetry scraper
+├── run.py                       ← CLI runner (python portals/run.py [portal_key | --all])
+└── .env                         ← Active infrastructure config (SQL Server, headless, concurrent)
+
+scraper/                         ← REUSABLE SCRAPING FRAMEWORK PACKAGE
+├── __init__.py                  ← Public API surface
 ├── core/
-│   ├── engine.py            ← Async worker pool + pipeline orchestrator
-│   ├── session.py           ← Immutable job descriptor
-│   ├── builder.py           ← Fluent ScraperBuilder
-│   └── context.py           ← Frozen config (env vars → dataclass)
+│   ├── engine.py                ← Async worker pool + pipeline orchestrator
+│   ├── session.py               ← Immutable job descriptor
+│   ├── builder.py               ← Fluent ScraperBuilder
+│   └── context.py               ← Frozen config (env vars → dataclass)
 ├── backends/
-│   ├── base.py              ← AbstractBackend + PageResponse
-│   ├── requests_backend.py  ← httpx async (no JS)
-│   └── playwright_backend.py← Chromium/Firefox/WebKit (full JS)
+│   ├── base.py                  ← AbstractBackend + PageResponse
+│   ├── requests_backend.py      ← httpx async (no JS)
+│   └── playwright_backend.py    ← Chromium/Firefox/WebKit (full JS)
 ├── auth/
-│   ├── base.py              ← AbstractAuthHandler
-│   └── form_auth.py         ← HTML form login (HTTP + Playwright)
-├── portals/
-│   ├── config.py            ← PortalConfig dataclass + form_auth() factory
-│   └── registry.py          ← PortalRegistry (YAML + .env.portals merging)
+│   ├── base.py                  ← AbstractAuthHandler
+│   └── form_auth.py             ← HTML form login (HTTP + Playwright)
 ├── interaction/
-│   ├── base.py              ← AbstractPageInteractor + AbstractFormAction
-│   └── form_actions.py      ← FormInteractor + form actions (Select, Checkbox, DownloadSubmit...)
+│   ├── base.py                  ← AbstractPageInteractor + AbstractFormAction
+│   └── form_actions.py          ← FormInteractor + form actions (Select, Checkbox, DownloadSubmit...)
 ├── navigation/
-│   ├── base.py              ← AbstractNavigator
-│   ├── link_navigator.py    ← Follow <a href> links
-│   └── pagination_navigator.py ← Next-page link / ?page=N increment
+│   ├── base.py                  ← AbstractNavigator
+│   ├── link_navigator.py        ← Follow <a href> links
+│   └── pagination_navigator.py  ← Next-page link / ?page=N increment
 ├── extractors/
-│   ├── base.py              ← AbstractExtractor
-│   ├── css_extractor.py     ← CSS selector extraction
-│   ├── xpath_extractor.py   ← XPath extraction (lxml)
-│   └── file_downloader.py   ← Concurrent file download
+│   ├── base.py                  ← AbstractExtractor
+│   ├── css_extractor.py         ← CSS selector extraction
+│   ├── xpath_extractor.py       ← XPath extraction (lxml)
+│   ├── csv_extractor.py         ← CSV stream processing and extraction
+│   ├── excel_extractor.py       ← Excel (XLS/XLSX) table extraction
+│   └── file_downloader.py       ← Concurrent file download
 ├── storage/
-│   ├── base.py              ← AbstractStorage
-│   └── sqlserver_storage.py ← SQL Server (SQLAlchemy + pyodbc)
+│   ├── base.py                  ← AbstractStorage
+│   ├── repository.py            ← Repository pattern for SQL telemetry tables
+│   └── sqlserver_storage.py     ← SQL Server (SQLAlchemy + pyodbc + MERGE/upsert)
 ├── debug/
-│   └── crawler.py           ← BFS DebugCrawler → CrawlNode tree
+│   └── crawler.py               ← BFS DebugCrawler → CrawlNode tree
 ├── events/
-│   └── dispatcher.py        ← Async EventDispatcher (observer)
+│   └── dispatcher.py            ← Async EventDispatcher (observer)
 ├── middleware/
-│   └── rate_limiter.py      ← Per-host async rate limiter
+│   └── rate_limiter.py          ← Per-host async rate limiter
 └── utils/
-    ├── url.py               ← URL normalisation / link extraction
-    └── logging.py           ← Rich console + RotatingFileHandler logs (scraper.log & error.log)
+    ├── url.py                   ← URL normalisation / link extraction
+    └── logging.py               ← Rich console + RotatingFileHandler logs (scraper.log & error.log)
 ```
 
 ---
@@ -150,9 +166,9 @@ Queue ──► Worker 0 ──► fetch → extract → store → discover → 
 
 ---
 
-## 7. Configuration via Environment Variables
+## 7. Configuration via Environment Variables (`portals/.env`)
 
-All settings can be overridden via a `.env` file (loaded via `python-dotenv`):
+All engine and infrastructure settings can be overridden via a `.env` file located in `portals/.env` (loaded automatically when importing `portals.config`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -166,6 +182,8 @@ All settings can be overridden via a `.env` file (loaded via `python-dotenv`):
 | `SCRAPER_DOWNLOAD_DIR` | `./downloads` | Local path for downloaded files |
 | `SCRAPER_DEBUG` | `false` | Enable debug logging + verbose output |
 | `SCRAPER_HEADLESS` | `true` | Playwright headless mode |
+
+> **Note**: `portals/.env` is exclusively for infrastructure and engine defaults. It must **never** contain portal-specific credentials.
 
 ---
 
@@ -309,13 +327,14 @@ playwright install chromium
 
 ---
 
-## 13. Portal Registry Pattern (`scraper.portals`)
+## 13. Portal Registry Pattern (`portals.config`)
 
 To support multi-portal environments cleanly without code modification or committing sensitive credentials:
 
-- **`portals.yml` (Git-tracked)**: Contains portal metadata, login URLs, target form field names, and custom properties (e.g. `export_url`, `module_id`).
-- **`.env.portals` (Gitignored)**: Contains authentication credentials (`<KEY_UPPERCASE>_USERNAME` and `PASSWORD`).
-- **`PortalRegistry`**: Loads `portals.yml`, merges with `.env.portals` at runtime, and exposes a factory `.form_auth()` that returns a fully configured `FormAuthHandler`.
+- **`portals/config/portals.yml` (Git-tracked)**: Contains public portal metadata, login URLs, target form field names, CSS selectors, and custom properties (e.g. `export_url`, `db_table`).
+- **`portals/config/portals_credentials.yml` (Gitignored)**: Contains authentication credentials (`username` and `password`) and optional portal-specific sensitive extra parameters (`api_key`, `client_id`, etc.). See `portals_credentials.example.yml` for the template.
+- **`PortalRegistry` & `PortalConfig`**: Loads `portals.yml`, merges with `portals_credentials.yml` at runtime, and exposes `.get_builder()` to generate a `ScraperBuilder` pre-configured with generic `.env` parameters and authentication (`form_auth()`).
+- **`portals/run.py` (CLI Runner)**: Executes single (`python portals/run.py messer`) or multiple (`python portals/run.py --all`) portals cleanly.
 
 ---
 

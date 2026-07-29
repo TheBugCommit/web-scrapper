@@ -1,23 +1,23 @@
 """
-scripts/messer.py
-~~~~~~~~~~~~~~~~~
+portals/messer/flow.py
+~~~~~~~~~~~~~~~~~~~~~~
 Scraper per al portal Global Datacenter (Messer).
 
-La configuració del portal (URLs, selectors) es llegeix de ``portals.yml``.
-Les credencials es llegeixen de ``.env.portals`` (gitignored).
+La configuració del portal (URLs, selectors) es llegeix de ``portals/config/portals.yml``.
+Les credencials es llegeixen de ``portals/config/portals_credentials.yml`` (gitignored).
 
 Flux d'execució:
-  1. PortalRegistry carrega configuració + credencials
-  2. Login amb FormAuthHandler generat des del PortalConfig
+  1. PortalRegistry carrega configuració + credencials YAML
+  2. Inicialitzar ScraperBuilder via ``portal.get_builder(url)`` (amb opcions d'entorn i auth)
   3. Navegar al formulari d'exportació XLS
   4. Configurar els paràmetres via FormInteractor (declaratiu)
   5. Submit → descàrrega automàtica de l'arxiu XLS
 
-Per afegir un altre portal: editar portals.yml + .env.portals.
-No cal modificar cap script de la llibreria.
+Per afegir un altre portal: editar portals.yml + portals_credentials.yml.
+No cal modificar cap script de la llibreria scraper.
 
 Run:
-    python scripts/messer.py
+    python portals/run.py messer
 """
 
 from __future__ import annotations

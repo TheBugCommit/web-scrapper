@@ -14,10 +14,10 @@
 - 🌐 **JS-rendered pages** — Playwright backend (Chromium/Firefox/WebKit)
 - 📄 **CSS & XPath extraction** — flexible rule-based data extraction
 - 🖱️ **Declarative form interactions** — execute multi-step form workflows (dropdowns, checkboxes, clicks, file downloads) via `FormInteractor`
-- 🗂️ **Dynamic Portal Registry** — multi-portal YAML configuration (`portals.yml`) separated from gitignored credentials (`.env.portals`)
+- 🗂️ **Dynamic Portal Registry** — multi-portal YAML configuration (`portals/config/portals.yml`) separated from gitignored credentials (`portals/config/portals_credentials.yml`)
 - 📜 **Rotating file logs** — automatic rotating file logs (`logs/scraper.log` & `logs/error.log`) alongside rich colorised console output
 - 📥 **File downloads** — concurrent file download with extension/pattern filtering
-- 🗄️ **SQL Server storage** — auto-creates tables, supports MERGE (upsert)
+- 🗄️ **SQL Server storage** — auto-creates tables, supports MERGE (upsert) via Repository pattern
 - 🕷️ **Debug crawler** — BFS recursive page map with JSON export
 - 🔔 **Event hooks** — observer system for monitoring and custom side-effects
 - 🐌 **Rate limiting** — per-host async token bucket
@@ -47,44 +47,61 @@ On Windows, download and install the ODBC Driver for SQL Server:
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in your values:
+The project is clearly separated into two layers:
+- **`portals/`**: Client application and multi-portal scraper flows.
+- **`scraper/`**: Reusable async web scraping framework package.
+
+### Infrastructure Configuration (`portals/.env`)
+
+Copy `portals/.env.example` to `portals/.env` (which is gitignored) and configure your database and scraper engine options:
 
 ```bash
-cp .env.example .env
+cp portals/.env.example portals/.env
 ```
 
-Key variables:
+Key variables in `portals/.env`:
 
 ```dotenv
+# SQL Server connection string
 SCRAPER_DB_CONNECTION_STRING=mssql+pyodbc://user:pass@server/db?driver=ODBC+Driver+17+for+SQL+Server
-SCRAPER_DB_TABLE=scraped_data
+
+# Browser & Engine Execution Options
+SCRAPER_HEADLESS=true
 SCRAPER_MAX_CONCURRENT=5
 SCRAPER_RATE_LIMIT_DELAY=1.0
+SCRAPER_MAX_RETRIES=3
+SCRAPER_TIMEOUT_MS=90000
 SCRAPER_DEBUG=false
-SCRAPER_HEADLESS=true
-
-# Rotating Logs
-SCRAPER_LOG_ENABLED=true
-SCRAPER_LOG_DIR=./logs
-SCRAPER_LOG_MAX_BYTES=10485760
-SCRAPER_LOG_BACKUPS=5
 ```
 
-### Multi-Portal Configuration (`portals.yml` & `.env.portals`)
+> **Note**: `portals/.env` is strictly reserved for infrastructure and generic scraper engine parameters. It should **never** contain portal-specific credentials.
 
-The library separates portal metadata from sensitive credentials:
+### Multi-Portal Configuration (`portals.yml` & `portals_credentials.yml`)
 
-1. **`portals.yml`** (Safe to commit to Git): Defines portal metadata, URLs, CSS selectors, and custom parameters.
-2. **`.env.portals`** (Gitignored): Stores credentials using the naming convention `<PORTAL_KEY_UPPERCASE>_USERNAME` and `<PORTAL_KEY_UPPERCASE>_PASSWORD`.
+The client application separates public portal metadata from sensitive login credentials:
+
+1. **`portals/config/portals.yml`** (Safe to commit to Git): Defines portal metadata, URLs, login URLs, CSS selectors, and custom properties (e.g. `export_url`, `db_table`).
+2. **`portals/config/portals_credentials.yml`** (Gitignored): Stores portal credentials (`username` and `password`) and any portal-specific sensitive parameters (e.g. `api_key`, `client_id`). See `portals_credentials.example.yml` for a template.
+
+```yaml
+# portals/config/portals_credentials.yml
+messer:
+  username: "myuser"
+  password: "mypassword"
+
+carburos_metalicos:
+  username: "anotheruser"
+  password: "anotherpassword"
+```
 
 ```python
-from scraper.portals import PortalRegistry
+from portals.config import PortalRegistry
 
 registry = PortalRegistry.load()
 portal = registry.get("messer")
 
-# Generates an authenticated FormAuthHandler automatically
-auth_handler = portal.form_auth()
+# Generates a pre-configured ScraperBuilder with environment defaults and authentication
+builder = portal.get_builder()
 ```
 
 ### Rotating Log Files
@@ -348,23 +365,51 @@ pytest tests/unit/
 
 ---
 
+## Running Client Portals (CLI)
+
+The project includes a unified CLI runner to execute scraping sessions for any configured portal:
+
+```bash
+# Execute a single portal by key (defined in portals/config/portals.yml)
+python portals/run.py messer
+python portals/run.py carburos_metalicos
+
+# Execute all configured portals sequentially
+python portals/run.py --all
+```
+
+---
+
 ## Project Structure
 
 ```
-scraper/          ← installable library package
-  auth/           ← authentication strategies
-  backends/       ← HTTP & Playwright browser backends
-  core/           ← engine, builder, session, context
-  extractors/     ← CSS, XPath & file download extractors
-  interaction/    ← FormInteractor & declarative form/download actions
-  navigation/     ← LinkNavigator & pagination
-  storage/        ← SQL Server storage sink
-examples/         ← runnable usage examples
+portals/                        ← CLIENT APPLICATION / PROJECTS
+  ├── config/                   ← Multi-portal configuration and secrets
+  │   ├── portals.yml           ← Public portal metadata and selectors
+  │   ├── portals_credentials.yml          ← Ignored YAML credentials
+  │   ├── portals_credentials.example.yml  <-- Example credentials template
+  │   ├── models.py             ← PortalConfig & get_builder() helper
+  │   └── registry.py           ← PortalRegistry loader
+  ├── messer/                   ← Messer (Global Datacenter) XLS flow
+  ├── carburos_metalicos/       ← Carburos Metálicos CSV telemetry flow
+  ├── run.py                    ← CLI runner for portal executions
+  ├── .env                      ← Active infrastructure config (ignored)
+  ├── .env.example              ← Infrastructure template
+  ├── .env.test                 ← Test environment config
+  └── .env.production           ← Production environment config
+scraper/                        ← REUSABLE SCRAPING FRAMEWORK PACKAGE
+  ├── auth/                     ← Authentication strategies (HTML Form Auth)
+  ├── backends/                 ← HTTP & Playwright browser backends
+  ├── core/                     ← Engine, builder, session, context
+  ├── extractors/               ← CSS, XPath, CSV, Excel & file downloaders
+  ├── interaction/              ← FormInteractor & declarative DOM actions
+  ├── navigation/               ← LinkNavigator & pagination
+  └── storage/                  ← Repository & Storage sinks (SQL Server)
+data/                           ← Scraped downloads and generated files
+examples/                       ← Runnable usage examples
 tests/
-  unit/           ← fast tests, no network
-  integration/    ← tests requiring network / DB
-.env.example      ← configuration template
-ARCHITECTURE.md   ← full design documentation
-requirements.txt  ← pinned dependencies
-pyproject.toml    ← packaging config
+  ├── unit/                     ← Fast unit tests (pytest tests/unit/)
+  └── integration/              ← Integration tests requiring DB/network
+ARCHITECTURE.md                 ← Full design and architecture documentation
+pyproject.toml                  ← Packaging config
 ```

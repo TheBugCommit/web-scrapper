@@ -3,22 +3,24 @@
 # Portal definitions — SAFE TO COMMIT TO GIT.
 # This file contains configuration, URLs, and selectors — NO credentials.
 #
-# Credentials are stored in .env.portals (gitignored).
-# Convention for env vars / .env.portals:
-#   <PORTAL_KEY_UPPERCASE>_USERNAME=...
-#   <PORTAL_KEY_UPPERCASE>_PASSWORD=...
+# Credentials are stored in portals/config/portals_credentials.yml (gitignored).
+# Convention for portals_credentials.yml:
+#   messer:
+#     username: "your_user"
+#     password: "your_password"
+#     # extra sensitive parameters if needed (e.g. api_key: "value")
 #
-# The PortalRegistry merges this file with the credentials at runtime.
+# The PortalRegistry merges this file with portals_credentials.yml at runtime.
 #
 # Usage in Python:
-#   from scraper.portals import PortalRegistry
+#   from portals.config import PortalRegistry
 #   registry = PortalRegistry.load()
 #   portal   = registry.get("messer")
-#   auth     = portal.form_auth()           # returns a FormAuthHandler
+#   builder  = portal.get_builder()         # returns ScraperBuilder with env defaults & auth
 #   url      = portal.extra["export_url"]   # portal-specific extras
 #
 # To add a new portal: add a new key under `portals:` and add its credentials
-# to .env.portals.  No code changes needed in the library.
+# to portals_credentials.yml.  No code changes needed in the library.
 # ─────────────────────────────────────────────────────────────────────────────
 
 portals:

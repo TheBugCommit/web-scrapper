@@ -1,21 +1,21 @@
 """
-portals/carburos_metalicos.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+portals/carburos_metalicos/flow.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Scraper per al portal Carburos Metálicos (Air Products).
 
-La configuració del portal (URLs, selectors) es llegeix de ``portals.yml``.
-Les credencials es llegeixen de ``.env.portals`` (gitignored).
+La configuració del portal (URLs, selectors) es llegeix de ``portals/config/portals.yml``.
+Les credencials es llegeixen de ``portals/config/portals_credentials.yml`` (gitignored).
 
 Flux d'execució:
-  1. PortalRegistry carrega configuració + credencials
-  2. Login amb FormAuthHandler generat des del PortalConfig
+  1. PortalRegistry carrega configuració + credencials YAML
+  2. Login amb FormAuthHandler generat des del PortalConfig via ``portal.get_builder()``
   3. Navegar al link de telemetria /Tanks/Readings/175738
   4. Configurar el filtre de dates en els inputs startDate i endDate via FormInteractor
   5. Descarregar l'arxiu CSV generat via getReadingsCsv
   6. Processar i netejar les columnes CSV convertint dates a zona horaria Europa/Madrid compatible amb SQL Server
 
 Run:
-    python portals/carburos_metalicos.py
+    python portals/run.py carburos_metalicos
 """
 
 from __future__ import annotations
