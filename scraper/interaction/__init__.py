@@ -7,10 +7,13 @@ from .form_actions import (
     DownloadSubmitAction,
     FillAction,
     FormInteractor,
+    NavigateAction,
+    PressKeyAction,
     SelectAction,
     UncheckAllAction,
     WaitForAction,
 )
+from .keys import Key, KeyCombo
 
 __all__ = [
     # ABCs
@@ -22,9 +25,14 @@ __all__ = [
     "CheckboxAction",
     "UncheckAllAction",
     "ClickAction",
+    "NavigateAction",
     "FillAction",
+    "PressKeyAction",
     "WaitForAction",
     "DownloadSubmitAction",
+    # Keys / KeyCombos
+    "Key",
+    "KeyCombo",
     # Orchestrator
     "FormInteractor",
 ]

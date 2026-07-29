@@ -13,7 +13,9 @@ Class                      What it does
 :class:`CheckboxAction`    Check / uncheck a single checkbox
 :class:`UncheckAllAction`  Uncheck every checkbox matching a selector
 :class:`ClickAction`       Click any element; optional navigation wait
+:class:`NavigateAction`    Navigate directly to a URL within an interaction sequence
 :class:`FillAction`        Type text into an ``<input>`` or ``<textarea>``
+:class:`PressKeyAction`    Press a keyboard key or key combination on an element
 :class:`WaitForAction`     Wait until a CSS selector appears in the DOM
 :class:`DownloadSubmitAction` Click a submit button and capture the downloaded file
 =========================  ==========================================================
@@ -24,11 +26,14 @@ All actions operate on a live Playwright ``Page`` object supplied by
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from scraper.interaction.base import AbstractFormAction, AbstractPageInteractor, InteractionResult
+from scraper.interaction.keys import Key, KeyCombo
+from scraper.utils.cookies import dismiss_cookie_banners
 from scraper.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -153,23 +158,81 @@ class ClickAction(AbstractFormAction):
             await page.click(self.selector)
 
 
+# ── NavigateAction ─────────────────────────────────────────────────────────────
+
+class NavigateAction(AbstractFormAction):
+    """Navigate directly to *url* within an interaction sequence.
+
+    Parameters:
+        url:        URL to navigate to (can be relative or absolute).
+        wait_until: When to consider navigation finished (default ``"domcontentloaded"``).
+        timeout:    Navigation timeout in ms.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        wait_until: str = "domcontentloaded",
+        timeout: int = 30_000,
+    ) -> None:
+        self.url        = url
+        self.wait_until = wait_until
+        self.timeout    = timeout
+
+    async def execute(self, page: Any) -> None:
+        logger.debug("NavigateAction: -> %s", self.url)
+        await page.goto(self.url, wait_until=self.wait_until, timeout=self.timeout)
+
+
 # ── FillAction ─────────────────────────────────────────────────────────────────
 
 class FillAction(AbstractFormAction):
     """Type *text* into a text input or textarea.
 
     Parameters:
-        selector: CSS selector of the input element.
-        text:     Text to type.
+        selector:  CSS selector of the input element.
+        text:      Text to type.
+        press_key: Optional key or key combination to press after filling
+                   (e.g. ``Key.ENTER``, ``Key.CONTROL + "a"``, ``KeyCombo.ctrl("Enter")``,
+                   or string ``"Enter"``).
     """
 
-    def __init__(self, selector: str, text: str) -> None:
-        self.selector = selector
-        self.text     = text
+    def __init__(
+        self,
+        selector: str,
+        text: str,
+        press_key: Key | KeyCombo | str | None = None,
+    ) -> None:
+        self.selector  = selector
+        self.text      = text
+        self.press_key: KeyCombo | None = KeyCombo.from_input(press_key)
 
     async def execute(self, page: Any) -> None:
-        logger.debug("FillAction: %s ← %r", self.selector, self.text)
+        logger.debug("FillAction: %s ← %r (press_key=%s)", self.selector, self.text, self.press_key)
         await page.fill(self.selector, self.text)
+        if self.press_key:
+            await page.press(self.selector, str(self.press_key))
+
+
+# ── PressKeyAction ─────────────────────────────────────────────────────────────
+
+class PressKeyAction(AbstractFormAction):
+    """Press a key or key combination on a targeted element.
+
+    Parameters:
+        selector: CSS selector of the target element.
+        key:      Key or key combination to press (e.g. ``Key.ENTER``, ``Key.CONTROL + "a"``).
+    """
+
+    def __init__(self, selector: str, key: Key | KeyCombo | str) -> None:
+        self.selector = selector
+        self.key = KeyCombo.from_input(key)
+        if self.key is None:
+            raise ValueError("PressKeyAction requires a valid key or KeyCombo")
+
+    async def execute(self, page: Any) -> None:
+        logger.debug("PressKeyAction: %s → %s", self.selector, self.key)
+        await page.press(self.selector, str(self.key))
 
 
 # ── WaitForAction ──────────────────────────────────────────────────────────────
@@ -279,16 +342,30 @@ class FormInteractor(AbstractPageInteractor):
         actions: list[AbstractFormAction],
         screenshot_on_error: bool = True,
         error_dir: str | Path = "./downloads",
+        url_pattern: str | None = None,
     ) -> None:
-        self._actions            = actions
+        self._actions             = actions
         self._screenshot_on_error = screenshot_on_error
-        self._error_dir          = Path(error_dir)
+        self._error_dir           = Path(error_dir)
+        self._url_re              = re.compile(url_pattern) if url_pattern else None
 
     async def interact(
         self, page: Any, context: "ScraperContext"
     ) -> InteractionResult:
         """Execute all actions in order and return the final page state."""
+        if self._url_re:
+            current_url = getattr(page, "url", "")
+            if current_url and not self._url_re.search(current_url):
+                logger.debug(
+                    "FormInteractor: skipping actions on %s (does not match url_pattern %r)",
+                    current_url,
+                    self._url_re.pattern,
+                )
+                content = await page.content()
+                return InteractionResult(page_content=content, downloads=[])
+
         logger.debug("FormInteractor: running %d actions", len(self._actions))
+        await dismiss_cookie_banners(page)
 
         try:
             for i, action in enumerate(self._actions):
