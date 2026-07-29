@@ -77,9 +77,7 @@ async def main() -> None:
         ScraperBuilder()
         .with_url(portal.extra["export_url"])
         .with_backend(PlaywrightBackend(headless=portal.headless, timeout=90_000))
-        # ── Auth: generated directly from PortalConfig ──────────────────────
         .with_auth(portal.form_auth())
-        # ── Form interactions ───────────────────────────────────────────────
         .with_interaction(
             FormInteractor(
                 actions=[
