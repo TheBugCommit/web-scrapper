@@ -27,6 +27,23 @@ def same_origin(url: str, base: str) -> bool:
     return a.scheme == b.scheme and a.netloc == b.netloc
 
 
+def get_domain(netloc: str) -> str:
+    """Return the root domain (e.g. 'airproducts.com' from 'apdirect.airproducts.com')."""
+    parts = netloc.split(":")  # drop port if any
+    host = parts[0]
+    domain_parts = host.split(".")
+    if len(domain_parts) >= 2:
+        return ".".join(domain_parts[-2:])
+    return host
+
+
+def same_domain(url: str, base: str) -> bool:
+    """Return *True* if *url* and *base* share the same root domain (e.g. both *.airproducts.com)."""
+    a = urlparse(url)
+    b = urlparse(base)
+    return a.scheme == b.scheme and get_domain(a.netloc) == get_domain(b.netloc)
+
+
 def is_navigable(url: str) -> bool:
     """Return *True* for http/https URLs (not mailto:, javascript:, etc.)."""
     scheme = urlparse(url).scheme

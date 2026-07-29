@@ -24,10 +24,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from scraper.auth.base import AbstractAuthHandler, AuthenticationError
 from scraper.backends.base import AbstractBackend
+from scraper.utils.cookies import dismiss_cookie_banners
 from scraper.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -60,7 +61,7 @@ class FormAuthHandler(AbstractAuthHandler):
         password: str,
         username_field: str = "username",
         password_field: str = "password",
-        submit_selector: str = "[type=submit]",
+        submit_selector: str = "button[type='submit'], input[type='submit'], [type=submit], button.button--default, button",
         success_selector: str | None = None,
         extra_fields: dict[str, str] | None = None,
         post_login_url: str | None = None,
@@ -100,6 +101,7 @@ class FormAuthHandler(AbstractAuthHandler):
             await page.goto(
                 self._login_url, timeout=30_000, wait_until="domcontentloaded"
             )
+            await dismiss_cookie_banners(page)
 
             # Fill extra hidden fields first
             for name, value in self._extra_fields.items():
@@ -119,6 +121,8 @@ class FormAuthHandler(AbstractAuthHandler):
             if self._post_login_url:
                 await page.goto(self._post_login_url, wait_until="networkidle")
 
+            await dismiss_cookie_banners(page)
+
             # Verify login success
             if self._success_selector:
                 element = await page.query_selector(self._success_selector)
@@ -129,6 +133,14 @@ class FormAuthHandler(AbstractAuthHandler):
                     )
 
             logger.info("FormAuth (Playwright): ✅ authenticated successfully")
+        except Exception as exc:
+            logger.error(
+                "FormAuth (Playwright): authentication failed on %s — %s",
+                self._login_url,
+                exc,
+                exc_info=True,
+            )
+            raise
         finally:
             await page.close()
 
@@ -144,13 +156,13 @@ class FormAuthHandler(AbstractAuthHandler):
         soup = BeautifulSoup(login_page.content, "lxml")
 
         form = soup.find("form")
-        if not form:
+        if not isinstance(form, Tag):
             raise AuthenticationError(
                 f"No <form> element found on login page: {self._login_url}"
             )
 
         # Determine the POST action URL
-        action: str = form.get("action", self._login_url)  # type: ignore[assignment]
+        action = str(form.get("action", self._login_url))
         if not action.startswith("http"):
             from urllib.parse import urljoin
             action = urljoin(self._login_url, action)
@@ -158,10 +170,11 @@ class FormAuthHandler(AbstractAuthHandler):
         # Harvest all hidden fields (CSRF tokens, honeypots, etc.)
         post_data: dict[str, str] = {}
         for hidden in form.find_all("input", type="hidden"):
-            name = hidden.get("name", "")
-            value = hidden.get("value", "")
-            if name:
-                post_data[name] = value
+            if isinstance(hidden, Tag):
+                name = str(hidden.get("name", ""))
+                value = str(hidden.get("value", ""))
+                if name and name != "None":
+                    post_data[name] = value
 
         # Add credentials + any caller-supplied overrides
         post_data[self._username_field] = self._username

@@ -24,6 +24,7 @@ import os
 from typing import Any, Literal
 
 from scraper.backends.base import AbstractBackend, PageResponse
+from scraper.utils.cookies import dismiss_cookie_banners
 from scraper.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -138,6 +139,7 @@ class PlaywrightBackend(AbstractBackend):
         try:
             logger.debug("Playwright GET %s", url)
             await page.goto(url, timeout=self._timeout, wait_until=self._wait_until)
+            await dismiss_cookie_banners(page)
             return await self._page_to_response(page, url)
         finally:
             await page.close()
@@ -145,7 +147,7 @@ class PlaywrightBackend(AbstractBackend):
     async def get_interactive(
         self,
         url: str,
-        interactors: list,
+        interactors: list[Any],
         context: Any = None,
     ) -> PageResponse:
         """Navigate to *url*, apply *interactors* on the live page, return response.
@@ -172,6 +174,7 @@ class PlaywrightBackend(AbstractBackend):
         try:
             logger.debug("Playwright GET (interactive) %s", url)
             await page.goto(url, timeout=self._timeout, wait_until=self._wait_until)
+            await dismiss_cookie_banners(page)
 
             all_downloads: list[str] = []
             final_content: str = await page.content()
