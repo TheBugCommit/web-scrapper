@@ -1,6 +1,6 @@
 """
-scraper.portals.registry
-~~~~~~~~~~~~~~~~~~~~~~~~
+portals.config.registry
+~~~~~~~~~~~~~~~~~~~~~~~
 ``PortalRegistry`` — loads portal configs from ``portals.yml`` and merges
 credentials from ``.env.portals``.
 
@@ -10,15 +10,15 @@ Design
   No usernames or passwords.
 - **.env.portals** (gitignored): credentials only, one line per portal::
 
-      MESSER_USERNAME=Balfego
-      MESSER_PASSWORD=s3cr3t
+      MESSER_USERNAME=
+      MESSER_PASSWORD=
 
   Env-var prefix is the portal key in upper-case.  The variables are also
   read from the process environment, so they can be injected via CI/CD
   secrets without a file on disk.
 
 - ``PortalRegistry.load()`` merges both sources into
-  :class:`~scraper.portals.config.PortalConfig` instances.
+  :class:`~portals.config.models.PortalConfig` instances.
 
 Usage::
 
@@ -35,16 +35,15 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
-from scraper.portals.config import PortalConfig
+from portals.config.models import PortalConfig
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_CONFIG  = "portals.yml"
-_DEFAULT_SECRETS = ".env.portals"
+_DEFAULT_CONFIG      = "portals/config/portals.yml"
+_DEFAULT_CREDENTIALS = "portals/config/portals_credentials.yml"
 
 # Keys that are handled explicitly — anything else goes into `extra`
 _KNOWN_KEYS = frozenset({
@@ -56,7 +55,7 @@ _KNOWN_KEYS = frozenset({
 
 
 class PortalRegistry:
-    """Registry of :class:`~scraper.portals.config.PortalConfig` objects.
+    """Registry of :class:`~portals.config.models.PortalConfig` objects.
 
     Load once at startup, then query by key throughout the application.
     """
@@ -70,27 +69,10 @@ class PortalRegistry:
     def load(
         cls,
         config_path: str | Path = _DEFAULT_CONFIG,
-        secrets_path: str | Path = _DEFAULT_SECRETS,
+        credentials_path: str | Path = _DEFAULT_CREDENTIALS,
     ) -> "PortalRegistry":
         """Load portals from *config_path* (YAML) and inject credentials from
-        *secrets_path* (.env format) or from process environment variables.
-
-        Args:
-            config_path:  Path to the YAML portal definitions file.
-                          Defaults to ``portals.yml`` in the working directory.
-            secrets_path: Path to the ``.env``-style secrets file.
-                          Defaults to ``.env.portals`` in the working directory.
-                          Missing file is silently ignored — credentials can also
-                          come from the process environment directly (useful for
-                          Docker / CI/CD).
-
-        Returns:
-            A populated :class:`PortalRegistry`.
-
-        Raises:
-            FileNotFoundError: If *config_path* does not exist.
-            ValueError:        If the YAML is malformed or missing the
-                               ``portals:`` top-level key.
+        *credentials_path* (YAML).
         """
         try:
             import yaml
@@ -100,23 +82,21 @@ class PortalRegistry:
                 "Install it with: pip install pyyaml"
             ) from exc
 
-        config_path  = Path(config_path)
-        secrets_path = Path(secrets_path)
+        config_path      = Path(config_path)
+        credentials_path = Path(credentials_path)
 
-        # ── Load secrets ──────────────────────────────────────────────────────
-        secrets: dict[str, str] = {}
-        if secrets_path.exists():
-            from dotenv import dotenv_values
-            secrets = {k: v for k, v in dotenv_values(secrets_path).items() if v}
-            logger.debug("PortalRegistry: loaded secrets from %s", secrets_path)
-        else:
-            logger.debug(
-                "PortalRegistry: secrets file %s not found; "
-                "falling back to process environment only.",
-                secrets_path,
-            )
+        # ── Load YAML credentials (portals_credentials.yml) ───────────────────
+        creds_yaml: dict[str, Any] = {}
+        if not credentials_path.exists() and Path("portals_credentials.yml").exists():
+            credentials_path = Path("portals_credentials.yml")
+        if credentials_path.exists():
+            with credentials_path.open(encoding="utf-8") as ch:
+                creds_yaml = yaml.safe_load(ch) or {}
+            logger.debug("PortalRegistry: loaded credentials YAML from %s", credentials_path)
 
         # ── Load YAML config ──────────────────────────────────────────────────
+        if not config_path.exists() and Path("portals.yml").exists():
+            config_path = Path("portals.yml")
         if not config_path.exists():
             raise FileNotFoundError(
                 f"Portal config file not found: {config_path.resolve()}\n"
@@ -139,26 +119,27 @@ class PortalRegistry:
                 logger.warning("PortalRegistry: skipping %r — not a mapping.", key)
                 continue
 
-            prefix   = key.upper()
-            username = (
-                secrets.get(f"{prefix}_USERNAME")
-                or os.environ.get(f"{prefix}_USERNAME", "")
-            )
-            password = (
-                secrets.get(f"{prefix}_PASSWORD")
-                or os.environ.get(f"{prefix}_PASSWORD", "")
-            )
+            portal_creds = creds_yaml.get(key, {})
+            if not isinstance(portal_creds, dict):
+                portal_creds = {}
+
+            username = str(portal_creds.get("username", ""))
+            password = str(portal_creds.get("password", ""))
 
             if not username or not password:
                 logger.warning(
-                    "PortalRegistry: portal %r has no credentials. "
-                    "Set %s_USERNAME and %s_PASSWORD in .env.portals.",
-                    key, prefix, prefix,
+                    "PortalRegistry: portal %r has missing username/password in %s.",
+                    key, credentials_path,
                 )
 
             # Split known fields from free-form extras
             known  = {k: v for k, v in cfg.items() if k in _KNOWN_KEYS}
             extras = {k: v for k, v in cfg.items() if k not in _KNOWN_KEYS}
+
+            # Merge any extra keys defined in portals_credentials.yml into extras
+            for k, v in portal_creds.items():
+                if k not in ("username", "password") and k not in extras:
+                    extras[k] = v
 
             portals[key] = PortalConfig(
                 key=key,
@@ -175,7 +156,7 @@ class PortalRegistry:
     # ── Instance methods ───────────────────────────────────────────────────────
 
     def get(self, key: str) -> PortalConfig:
-        """Return the :class:`~scraper.portals.config.PortalConfig` for *key*.
+        """Return the :class:`~portals.config.models.PortalConfig` for *key*.
 
         Args:
             key: Portal identifier as defined in ``portals.yml``.

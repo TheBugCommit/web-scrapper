@@ -20,7 +20,6 @@ Playwright must be installed separately::
 
 from __future__ import annotations
 
-import os
 from typing import Any, Literal
 
 from scraper.backends.base import AbstractBackend, PageResponse
@@ -48,16 +47,13 @@ class PlaywrightBackend(AbstractBackend):
     def __init__(
         self,
         browser: BrowserType = "chromium",
-        headless: bool | None = None,
+        headless: bool = True,
         timeout: int = 30_000,
         slow_mo: int = 0,
         extra_args: list[str] | None = None,
         wait_until: str = "networkidle",
     ) -> None:
         self._browser_type = browser
-        # Allow env var override; constructor arg takes precedence
-        if headless is None:
-            headless = os.getenv("SCRAPER_HEADLESS", "true").lower() in ("1", "true", "yes")
         self._headless = headless
         self._timeout = timeout
         self._slow_mo = slow_mo

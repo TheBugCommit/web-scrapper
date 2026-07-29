@@ -2,27 +2,22 @@
 scraper.core.context
 ~~~~~~~~~~~~~~~~~~~~
 Immutable configuration container for a scraping run.
-All values can be overridden via environment variables (loaded from .env).
+All values are passed explicitly; no environment variables are read by the library.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from dotenv import load_dotenv
-
-# Load .env on first import so every module benefits automatically.
-load_dotenv(override=False)
+from typing import Any
 
 
 @dataclass(frozen=True)
 class ScraperContext:
     """Shared, read-only configuration passed throughout the scraping pipeline.
 
-    All fields have sensible defaults that read from environment variables.
-    Explicit constructor arguments always take precedence over env vars.
+    All fields have sensible static defaults. Explicit constructor arguments
+    always take precedence.
 
     Attributes:
         base_url:           Root URL for the scraping session.
@@ -39,31 +34,13 @@ class ScraperContext:
     """
 
     base_url: str = ""
-    max_depth: int = field(default_factory=lambda: int(os.getenv("SCRAPER_MAX_DEPTH", "5")))
-    max_concurrent: int = field(
-        default_factory=lambda: int(os.getenv("SCRAPER_MAX_CONCURRENT", "5"))
-    )
-    debug_mode: bool = field(
-        default_factory=lambda: os.getenv("SCRAPER_DEBUG", "false").lower()
-        in ("1", "true", "yes")
-    )
-    rate_limit_delay: float = field(
-        default_factory=lambda: float(os.getenv("SCRAPER_RATE_LIMIT_DELAY", "1.0"))
-    )
-    max_retries: int = field(
-        default_factory=lambda: int(os.getenv("SCRAPER_MAX_RETRIES", "3"))
-    )
-    download_dir: Path = field(
-        default_factory=lambda: Path(os.getenv("SCRAPER_DOWNLOAD_DIR", "./downloads"))
-    )
-    headless: bool = field(
-        default_factory=lambda: os.getenv("SCRAPER_HEADLESS", "true").lower()
-        in ("1", "true", "yes")
-    )
-    db_connection_string: str = field(
-        default_factory=lambda: os.getenv("SCRAPER_DB_CONNECTION_STRING", "")
-    )
-    db_table: str = field(
-        default_factory=lambda: os.getenv("SCRAPER_DB_TABLE", "scraped_data")
-    )
-    extra: dict[str, str] = field(default_factory=dict)
+    max_depth: int = 5
+    max_concurrent: int = 10
+    debug_mode: bool = False
+    rate_limit_delay: float = 1.0
+    max_retries: int = 5
+    download_dir: Path = field(default_factory=lambda: Path("./downloads"))
+    headless: bool = True
+    db_connection_string: str = ""
+    db_table: str = "scraped_data"
+    extra: dict[str, Any] = field(default_factory=dict)

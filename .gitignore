@@ -79,7 +79,12 @@ playwright-report/
 test-results/
 
 # ── Project-specific ──────────────────────────────────────────────────────────
+# Sensitive credentials YAML (never commit real credentials)
+portals_credentials.yml
+portals/config/portals_credentials.yml
+
 # Downloaded files produced by FileDownloader
+data/
 downloads/
 
 # Debug crawl output

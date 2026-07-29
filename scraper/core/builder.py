@@ -32,6 +32,7 @@ Usage example::
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from scraper.core.context import ScraperContext
@@ -63,6 +64,15 @@ class ScraperBuilder:
         self._storage: "AbstractStorage | None" = None
         self._start_urls: list[str] = []
 
+        # Default context configuration options
+        self._max_depth: int = 5
+        self._max_concurrent: int = 5
+        self._debug_mode: bool = False
+        self._rate_limit_delay: float = 1.0
+        self._max_retries: int = 3
+        self._download_dir: Path = Path("./downloads")
+        self._headless: bool = True
+
     # ── Context / URL ──────────────────────────────────────────────────────
 
     def with_url(self, url: str) -> "ScraperBuilder":
@@ -78,6 +88,41 @@ class ScraperBuilder:
     def with_context(self, context: ScraperContext) -> "ScraperBuilder":
         """Provide a fully-configured :class:`ScraperContext` directly."""
         self._context = context
+        return self
+
+    def with_max_depth(self, depth: int) -> "ScraperBuilder":
+        """Set maximum link-follow depth for crawlers."""
+        self._max_depth = depth
+        return self
+
+    def with_max_concurrent(self, max_concurrent: int) -> "ScraperBuilder":
+        """Set maximum concurrent page-fetch workers."""
+        self._max_concurrent = max_concurrent
+        return self
+
+    def with_debug_mode(self, enabled: bool = True) -> "ScraperBuilder":
+        """Enable or disable verbose debug mode."""
+        self._debug_mode = enabled
+        return self
+
+    def with_rate_limit_delay(self, delay_seconds: float) -> "ScraperBuilder":
+        """Set rate limit delay between requests in seconds."""
+        self._rate_limit_delay = delay_seconds
+        return self
+
+    def with_max_retries(self, max_retries: int) -> "ScraperBuilder":
+        """Set maximum retry attempts on transient failures."""
+        self._max_retries = max_retries
+        return self
+
+    def with_download_dir(self, directory: str | Path) -> "ScraperBuilder":
+        """Set destination directory for downloaded files."""
+        self._download_dir = Path(directory)
+        return self
+
+    def with_headless(self, headless: bool = True) -> "ScraperBuilder":
+        """Set whether Playwright runs in headless mode."""
+        self._headless = headless
         return self
 
     # ── Backend ────────────────────────────────────────────────────────────
@@ -162,7 +207,16 @@ class ScraperBuilder:
         # Build a default context if the caller did not supply one explicitly.
         if self._context is None:
             base = self._start_urls[0] if self._start_urls else ""
-            self._context = ScraperContext(base_url=base)
+            self._context = ScraperContext(
+                base_url=base,
+                max_depth=self._max_depth,
+                max_concurrent=self._max_concurrent,
+                debug_mode=self._debug_mode,
+                rate_limit_delay=self._rate_limit_delay,
+                max_retries=self._max_retries,
+                download_dir=self._download_dir,
+                headless=self._headless,
+            )
 
         return ScraperSession(
             context=self._context,

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime
-import os
 from functools import partial
 from typing import Any, TYPE_CHECKING
 
@@ -25,7 +24,10 @@ from scraper.storage.sqlserver_storage import normalise_sqlserver_connection_str
 from scraper.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from scraper.portals.config import PortalConfig
+    from typing import Protocol
+
+    class _PortalLike(Protocol):
+        db_schema: str
 
 logger = get_logger(__name__)
 
@@ -33,13 +35,14 @@ logger = get_logger(__name__)
 class SQLServerRepository:
     """Async repository for querying SQL Server tables via the Criteria pattern.
 
-    Designed to be used independently of the ScraperEngine for pre-flight checks,
-    last-date determination, and dynamic criteria queries.
+    Construct instances using one of the factory class-methods:
+    - :meth:`from_env`: read connection string from ``SCRAPER_DB_CONNECTION_STRING``
+    - :meth:`from_portal`: derive schema from a PortalConfig object
 
     Example usage::
 
         async with SQLServerRepository.from_env() as repo:
-            start_date = await repo.get_last_date(
+            last_date = await repo.get_last_date(
                 table="Telemetria_Tanque_N",
                 date_column="timestamp",
                 schema="dbo",
@@ -54,24 +57,12 @@ class SQLServerRepository:
         self._engine: Engine | None = None
 
     @classmethod
-    def from_env(cls, default_schema: str = "dbo") -> "SQLServerRepository":
-        """Instantiate using SCRAPER_DB_CONNECTION_STRING from environment variables."""
-        conn = os.environ.get("SCRAPER_DB_CONNECTION_STRING", "")
-        if not conn:
-            raise ValueError(
-                "SCRAPER_DB_CONNECTION_STRING environment variable is not set. "
-                "Copy .env.example to .env and fill in the value."
-            )
-        return cls(connection_string=conn, default_schema=default_schema)
-
-    @classmethod
-    def from_portal(cls, portal: "PortalConfig") -> "SQLServerRepository":
-        """Instantiate a repository from a PortalConfig instance."""
+    def from_portal(cls, portal: "_PortalLike", connection_string: str) -> "SQLServerRepository":
+        """Instantiate a repository from a portal config object and explicit connection string."""
         schema = getattr(portal, "db_schema", "dbo") or "dbo"
-        conn = os.environ.get("SCRAPER_DB_CONNECTION_STRING", "")
-        if not conn:
-            raise ValueError("SCRAPER_DB_CONNECTION_STRING is not set in environment.")
-        return cls(connection_string=conn, default_schema=schema)
+        if not connection_string:
+            raise ValueError("connection_string is required to instantiate SQLServerRepository.")
+        return cls(connection_string=connection_string, default_schema=schema)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -213,7 +204,8 @@ class SQLServerRepository:
 
 
 async def get_portal_last_date(
-    portal: "PortalConfig",
+    portal: "_PortalLike",
+    connection_string: str,
     date_column: str = "timestamp",
     default_date: date = date(2024, 5, 1),
 ) -> date:
@@ -226,7 +218,7 @@ async def get_portal_last_date(
     table = getattr(portal, "db_table", "scraped_data") or "scraped_data"
     schema = getattr(portal, "db_schema", "dbo") or "dbo"
 
-    async with SQLServerRepository.from_portal(portal) as repo:
+    async with SQLServerRepository.from_portal(portal, connection_string=connection_string) as repo:
         return await repo.get_last_date(
             table=table,
             date_column=date_column,

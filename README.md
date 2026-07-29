@@ -29,7 +29,6 @@
 
 ```bash
 # Clone the repo
-git clone https://github.com/balfego/web-scrapper.git
 cd web-scrapper
 
 # Install in editable mode

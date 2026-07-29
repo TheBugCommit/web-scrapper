@@ -23,22 +23,19 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import os
-from datetime import date, timedelta
+import sys
+from datetime import date
 from pathlib import Path
+from typing import Any
 
-from dotenv import load_dotenv
-
-load_dotenv()
+# Ensure project root is in sys.path so 'portals' package can be imported directly
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scraper import (
     EventDispatcher,
     ExcelExtractor,
-    SQLServerRepository,
-    ScraperBuilder,
     print_result_summary,
 )
-from scraper.backends import PlaywrightBackend
 from scraper.core.engine import ScraperEngine
 from scraper.interaction import (
     CheckboxAction,
@@ -47,15 +44,20 @@ from scraper.interaction import (
     SelectAction,
     UncheckAllAction,
 )
-from scraper.portals import PortalRegistry
+from scraper.utils.logging import configure_logging
+from portals.config import PortalConfig, PortalRegistry
 
 registry = PortalRegistry.load()
 portal   = registry.get("messer")
 
-DOWNLOAD_DIR = Path(os.getenv("SCRAPER_DOWNLOAD_DIR", "./downloads"))
+DOWNLOAD_DIR = Path("data") / "messer" / "downloads"
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-async def get_last_date(portal) -> date:
-    async with SQLServerRepository.from_portal(portal) as repo:
+LOG_DIR = Path("data") / "messer" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+async def get_last_date(portal: PortalConfig) -> date:
+    async with portal.get_repository() as repo:
         return await repo.get_last_date(
             table=portal.db_table or "Telemetria_Tanque_N",
             date_column="timestamp",
@@ -63,7 +65,8 @@ async def get_last_date(portal) -> date:
             default_date=date(2024, 5, 1),
         )
 
-async def main() -> None:
+async def run_flow() -> None:
+    configure_logging(log_dir=LOG_DIR, debug=False)
     today = date.today()
     start = await get_last_date(portal)
 
@@ -74,10 +77,8 @@ async def main() -> None:
     print("=" * 60)
 
     session = (
-        ScraperBuilder()
-        .with_url(portal.extra["export_url"])
-        .with_backend(PlaywrightBackend(headless=portal.headless, timeout=90_000))
-        .with_auth(portal.form_auth())
+        portal.get_builder(portal.extra["export_url"])
+        .with_download_dir(DOWNLOAD_DIR)
         .with_interaction(
             FormInteractor(
                 actions=[
@@ -136,31 +137,31 @@ async def main() -> None:
     dispatcher = EventDispatcher()
 
     @dispatcher.on("auth.success")
-    def on_auth(payload: dict) -> None:
+    def on_auth(payload: dict[str, Any]) -> None:
         print("  🔐 [Event: auth.success] Autenticació al portal completada amb èxit!")
 
     @dispatcher.on("file.downloaded")
-    def on_download(payload: dict) -> None:
+    def on_download(payload: dict[str, Any]) -> None:
         print(
             f"  📥 [Event: file.downloaded] Fitxer descarregat: {payload['path']} ({payload['size_bytes']} bytes)"
         )
 
     @dispatcher.on("storage.saved")
-    def on_saved(payload: dict) -> None:
+    def on_saved(payload: dict[str, Any]) -> None:
         print(
             f"  🚀 [Event: storage.saved] Desats/upsertats {payload['rows']} registres a SQL Server "
             f"[{payload['schema']}].[{payload['table']}] (PK: {payload['upsert_key']})!"
         )
 
     @dispatcher.on("storage.skipped")
-    def on_skipped(payload: dict) -> None:
+    def on_skipped(payload: dict[str, Any]) -> None:
         print(
             f"  ⚠️ [Event: storage.skipped] Cap registre per desar a [{payload['schema']}].[{payload['table']}] "
             f"(Motiu: {payload.get('reason')})"
         )
 
     @dispatcher.on("storage.error")
-    def on_error(payload: dict) -> None:
+    def on_error(payload: dict[str, Any]) -> None:
         print(
             f"  ❌ [Event: storage.error] Error desant a [{payload['schema']}].[{payload['table']}]: {payload['error']}"
         )
@@ -171,4 +172,4 @@ async def main() -> None:
     print_result_summary(result, title=f"{portal.name} - XLS Export")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_flow())

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 from logging.handlers import RotatingFileHandler
-import os
 from pathlib import Path
 
 from rich.console import Console
@@ -31,7 +30,13 @@ _console = Console(stderr=True)
 _INITIALIZED = False
 
 
-def configure_logging(debug: bool = False, log_dir: str | Path | None = None) -> None:
+def configure_logging(
+    debug: bool = False,
+    log_dir: str | Path | None = "./logs",
+    enable_file_logging: bool = True,
+    max_bytes: int = 10_485_760,
+    backup_count: int = 5,
+) -> None:
     """Configure root logging for the scraper library.
 
     Sets up:
@@ -58,13 +63,9 @@ def configure_logging(debug: bool = False, log_dir: str | Path | None = None) ->
     ]
 
     # ── Rotating Log Files ────────────────────────────────────────────────────
-    log_enabled = os.getenv("SCRAPER_LOG_ENABLED", "true").lower() in ("1", "true", "yes")
-    if log_enabled:
-        target_dir = Path(log_dir or os.getenv("SCRAPER_LOG_DIR", "./logs"))
+    if enable_file_logging and log_dir:
+        target_dir = Path(log_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
-
-        max_bytes = int(os.getenv("SCRAPER_LOG_MAX_BYTES", "10485760"))  # default 10MB
-        backup_count = int(os.getenv("SCRAPER_LOG_BACKUPS", "5"))
 
         file_formatter = logging.Formatter(
             fmt="[%(asctime)s] [%(levelname)-8s] [%(name)s] %(message)s",
@@ -109,9 +110,6 @@ def configure_logging(debug: bool = False, log_dir: str | Path | None = None) ->
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Return a library logger.  The name should be ``__name__``."""
-    # Honour the SCRAPER_DEBUG env var so that importing the library is enough
-    # to activate debug logging without having to call configure_logging().
-    debug = os.getenv("SCRAPER_DEBUG", "false").lower() in ("1", "true", "yes")
-    configure_logging(debug=debug)
+    """Return a library logger. The name should be ``__name__``."""
+    configure_logging()
     return logging.getLogger(name)

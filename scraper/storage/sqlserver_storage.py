@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import urllib.parse
 from functools import partial
@@ -182,31 +181,6 @@ class SQLServerStorage(AbstractStorage):
         self._loop = asyncio.get_event_loop
 
     # ── Factory ───────────────────────────────────────────────────────────
-
-    @classmethod
-    def from_env(
-        cls,
-        table: str = "scraped_data",
-        upsert_key: str | list[str] | None = None,
-        schema_prefix: str = "dbo",
-    ) -> "SQLServerStorage":
-        """Instantiate using SCRAPER_DB_CONNECTION_STRING from environment variables.
-
-        Table name, upsert key, and schema are passed explicitly (typically
-        loaded per-portal from portals.yml via portal.get_storage()).
-        """
-        conn = os.environ.get("SCRAPER_DB_CONNECTION_STRING", "")
-        if not conn:
-            raise ValueError(
-                "SCRAPER_DB_CONNECTION_STRING environment variable is not set. "
-                "Copy .env.example to .env and fill in the value."
-            )
-        return cls(
-            connection_string=conn,
-            table=table,
-            upsert_key=upsert_key,
-            schema_prefix=schema_prefix,
-        )
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 

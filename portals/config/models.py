@@ -1,6 +1,6 @@
 """
-scraper.portals.config
-~~~~~~~~~~~~~~~~~~~~~~
+portals.config.models
+~~~~~~~~~~~~~~~~~~~~~
 ``PortalConfig`` — immutable descriptor for one web portal.
 
 Contains everything needed to connect to a portal (URLs, field selectors,
@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from scraper.auth.form_auth import FormAuthHandler
+    from scraper.core.builder import ScraperBuilder
+    from scraper.storage.repository import SQLServerRepository
     from scraper.storage.sqlserver_storage import SQLServerStorage
 
 
@@ -57,15 +59,7 @@ class PortalConfig:
     extra: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
 
     def form_auth(self) -> "FormAuthHandler":
-        """Return a ready-to-use :class:`~scraper.auth.form_auth.FormAuthHandler`.
-
-        Example::
-
-            portal = registry.get("messer")
-            session = ScraperBuilder()\\
-                .with_auth(portal.form_auth())\\
-                ...
-        """
+        """Return a ready-to-use :class:`~scraper.auth.form_auth.FormAuthHandler`."""
         from scraper.auth.form_auth import FormAuthHandler
 
         return FormAuthHandler(
@@ -78,12 +72,8 @@ class PortalConfig:
             success_selector=self.success_selector,
         )
 
-    def get_storage(self, connection_string: str | None = None) -> "SQLServerStorage":
-        """Return a configured SQLServerStorage for this portal's table.
-
-        Uses connection_string if passed, otherwise falls back to
-        SCRAPER_DB_CONNECTION_STRING from the environment.
-        """
+    def get_storage(self, connection_string: str | None = None) -> SQLServerStorage:
+        """Return a configured SQLServerStorage for this portal's table."""
         import os
         from scraper.storage.sqlserver_storage import SQLServerStorage
 
@@ -102,6 +92,53 @@ class PortalConfig:
             table=table,
             upsert_key=upsert_key,
             schema_prefix=schema,
+        )
+
+    def get_repository(self, connection_string: str | None = None) -> SQLServerRepository:
+        """Return a configured SQLServerRepository for this portal's schema."""
+        import os
+        from scraper.storage.repository import SQLServerRepository
+
+        conn_str = connection_string or os.getenv("SCRAPER_DB_CONNECTION_STRING")
+        if not conn_str:
+            raise ValueError(
+                "No SQL Server connection string provided and SCRAPER_DB_CONNECTION_STRING "
+                "is not set in the environment."
+            )
+        schema = self.db_schema or "dbo"
+        return SQLServerRepository(connection_string=conn_str, default_schema=schema)
+
+    def get_builder(self, url: str | None = None) -> "ScraperBuilder":
+        """Return a pre-configured ScraperBuilder with generic environment settings."""
+        import os
+        from scraper.backends import PlaywrightBackend
+        from scraper.core.builder import ScraperBuilder
+
+        max_concurrent = int(os.getenv("SCRAPER_MAX_CONCURRENT", "5"))
+        max_retries = int(os.getenv("SCRAPER_MAX_RETRIES", "3"))
+        rate_limit_delay = float(os.getenv("SCRAPER_RATE_LIMIT_DELAY", "1.0"))
+        timeout_ms = int(os.getenv("SCRAPER_TIMEOUT_MS", "90000"))
+        debug_mode = os.getenv("SCRAPER_DEBUG", "false").lower() in ("1", "true", "yes")
+
+        headless_env = os.getenv("SCRAPER_HEADLESS")
+        headless = (
+            headless_env.lower() in ("1", "true", "yes")
+            if headless_env is not None
+            else self.headless
+        )
+
+        target_url = url or self.portal_url
+
+        return (
+            ScraperBuilder()
+            .with_url(target_url)
+            .with_backend(PlaywrightBackend(headless=headless, timeout=timeout_ms))
+            .with_auth(self.form_auth())
+            .with_headless(headless)
+            .with_max_concurrent(max_concurrent)
+            .with_max_retries(max_retries)
+            .with_rate_limit_delay(rate_limit_delay)
+            .with_debug_mode(debug_mode)
         )
 
     def __repr__(self) -> str:  # hide password from repr / logs
