@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 
 from scraper.navigation.base import AbstractNavigator
 from scraper.utils.logging import get_logger
-from scraper.utils.url import is_navigable, normalise
+from scraper.utils.url import is_navigable, normalise, same_domain
 
 if TYPE_CHECKING:
     from scraper.backends.base import PageResponse
@@ -56,12 +56,15 @@ class LinkNavigator(AbstractNavigator):
         found: list[str] = []
 
         for tag in soup.select(self._css_filter):
-            href: str = tag.get("href", "").strip()
+            raw_href = tag.get("href", "")
+            href = str(raw_href[0] if isinstance(raw_href, list) else raw_href).strip()
             if not href or href.startswith("#"):
                 continue
 
             abs_url = normalise(href, base=page.url)
             if not is_navigable(abs_url):
+                continue
+            if self._same_origin and not same_domain(abs_url, page.url):
                 continue
             if abs_url in seen:
                 continue
