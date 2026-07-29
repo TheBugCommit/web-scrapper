@@ -127,7 +127,7 @@ def read_csv_rows(
     )
 
     for col in df.columns:
-        if str(col).lower() in user_excludes:
+        if col.lower() in user_excludes:
             continue
 
         series = df[col]

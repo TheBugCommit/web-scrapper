@@ -57,7 +57,7 @@ class LinkNavigator(AbstractNavigator):
 
         for tag in soup.select(self._css_filter):
             raw_href = tag.get("href", "")
-            href = str(raw_href[0] if isinstance(raw_href, list) else raw_href).strip()
+            href = raw_href[0] if isinstance(raw_href, list) else raw_href.strip()
             if not href or href.startswith("#"):
                 continue
 
