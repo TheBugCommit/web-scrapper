@@ -56,3 +56,10 @@ def test_extract_links_skips_fragments():
     html = '<a href="#top">Top</a>'
     links = extract_links(html, "https://example.com")
     assert links == []
+
+
+def test_same_domain():
+    from scraper.utils.url import same_domain
+
+    assert same_domain("https://apdirect.airproducts.com/Tanks", "https://account.airproducts.com/login") is True
+    assert same_domain("https://google.com", "https://account.airproducts.com/login") is False
