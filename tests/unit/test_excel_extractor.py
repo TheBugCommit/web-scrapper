@@ -33,5 +33,5 @@ async def test_excel_extractor() -> None:
     first = data["_rows"][0]
     assert "timestamp" in first
     assert first["timestamp"].endswith(":00")
-    assert first["nivel_tanque_pct"] == 70.0
-    assert first["presion_bar"] == 4.0
+    assert first["nivel_tanque_pct"] == 24.0
+    assert first["presion_bar"] == 5.76

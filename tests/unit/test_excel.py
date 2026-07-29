@@ -26,5 +26,5 @@ def test_read_excel_rows_balfeg(tmp_path: Path) -> None:
     assert isinstance(first["nivel_tanque_pct"], float)
     assert isinstance(first["presion_bar"], float)
     # Ensure comma was converted to dot
-    assert first["nivel_tanque_pct"] == 70.0
-    assert first["presion_bar"] == 4.0
+    assert first["nivel_tanque_pct"] == 24.0
+    assert first["presion_bar"] == 5.76

@@ -1,74 +1,87 @@
 """
-scraper.utils.excel
-~~~~~~~~~~~~~~~~~~~
-Excel reading and data cleaning utilities for extracting rows from scraped
-spreadsheets (.xls, .xlsx) into database-ready dictionaries.
+scraper.utils.csv
+~~~~~~~~~~~~~~~~~
+CSV reading and data cleaning utilities for extracting rows from scraped
+CSV spreadsheets into database-ready dictionaries.
 
-Usage::
-
-    from scraper.utils.excel import read_excel_rows
-
-    rows = read_excel_rows(
-        "downloads/Balfeg.xls",
-        columns=["timestamp", "nivel_tanque_pct", "presion_bar"],
-    )
-    await storage.save_many(rows)
+Supports automatic delimiter sniffing (semicolon, tab, comma) and automatic
+detection of numeric columns and datetime columns without relying on hardcoded
+column names.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
-def read_excel_rows(
+def _read_csv_df(path: Path) -> "pd.DataFrame":
+    import pandas as pd
+
+    # Try automatic delimiter sniffing with common European/UTF encodings
+    for enc in ("utf-8-sig", "utf-8", "latin-1", "iso-8859-1"):
+        try:
+            df = pd.read_csv(path, sep=None, engine="python", encoding=enc)
+            if len(df.columns) > 1:
+                return df
+        except Exception:
+            continue
+
+    # Fallback to explicit separators if sniffing didn't split columns
+    for sep in ("\t", ";", ","):
+        for enc in ("utf-8-sig", "utf-8", "latin-1"):
+            try:
+                df = pd.read_csv(path, sep=sep, encoding=enc)
+                if len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
+
+    # Default fallback
+    return pd.read_csv(path)
+
+
+def read_csv_rows(
     filepath: str | Path,
     columns: list[str] | dict[str, str] | None = None,
     clean_comma_decimals: bool = True,
     exclude_clean_cols: list[str] | None = None,
     tz: str | None = "Europe/Madrid",
 ) -> list[dict[str, Any]]:
-    """Read an Excel spreadsheet (.xls or .xlsx) and return a list of row dicts.
+    """Read a CSV file and return a list of row dicts.
 
     Automatically detects date/time columns (converting them to SQL Server
-    DATETIMEOFFSET compatible format) and Spanish/German comma decimals
-    without relying on hardcoded column names.
+    DATETIMEOFFSET compatible format) and Spanish comma decimals without
+    relying on hardcoded column names.
 
     Parameters:
-        filepath:             Path to the downloaded Excel file (.xls or .xlsx).
-        columns:              Optional column mapping:
-                              - If a list of names is given (e.g. ``["timestamp", "nivel", "presion"]``),
-                                it renames columns sequentially from left to right.
-                              - If a dict is given, it maps source headers to target column names.
-        clean_comma_decimals: Whether to replace comma decimals (``','``) with dots (``'.'``)
-                              and cast string numbers to floats/ints.
+        filepath:             Path to the downloaded CSV file.
+        columns:              Optional column mapping (list by position or dict by header name).
+        clean_comma_decimals: Whether to clean thousands dots and comma decimals.
         exclude_clean_cols:   Column names to exempt from numeric conversion.
         tz:                   Timezone name for timestamp localization/conversion (default ``"Europe/Madrid"``).
 
     Returns:
         A list of dictionary records ready for SQLServerStorage.save_many().
-
-    Raises:
-        ImportError: If pandas, xlrd, or openpyxl are not installed.
-        FileNotFoundError: If the specified file does not exist.
     """
     try:
         import pandas as pd
     except ImportError as exc:
         raise ImportError(
-            "pandas, xlrd, and openpyxl are required for read_excel_rows(). "
-            "Install them with: pip install pandas xlrd openpyxl"
+            "pandas is required for read_csv_rows(). Install it with: pip install pandas"
         ) from exc
 
     path = Path(filepath)
     if not path.exists():
-        raise FileNotFoundError(f"Excel file not found: {path.resolve()}")
+        raise FileNotFoundError(f"CSV file not found: {path.resolve()}")
 
-    df = pd.read_excel(path)
+    df = _read_csv_df(path)
 
     # 1. Map columns if requested
     if isinstance(columns, list):
-        # Rename by position up to len(columns)
         num_cols = min(len(columns), len(df.columns))
         rename_map = {df.columns[i]: columns[i] for i in range(num_cols)}
         df = df.rename(columns=rename_map)
