@@ -11,7 +11,7 @@ browser options) and the credentials loaded from the secrets file
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from scraper.auth.form_auth import FormAuthHandler
@@ -28,10 +28,11 @@ class PortalConfig:
         name:             Human-readable display name.
         portal_url:       Main URL of the portal (also the scraper's start URL).
         login_url:        URL of the HTML login form.
-        username:         Credential — loaded from ``.env.portals``, never YAML.
-        password:         Credential — loaded from ``.env.portals``, never YAML.
-        username_field:   CSS ``name`` attribute of the username input.
-        password_field:   CSS ``name`` attribute of the password input.
+        username:         Credential loaded from secrets file / environment.
+        password:         Credential loaded from secrets file / environment.
+        username_field:   HTML ``name`` attribute of username input.
+        password_field:   HTML ``name`` attribute of password input.
+        submit_selector:  CSS selector of the submit button.
         success_selector: CSS selector that appears only after a successful login.
         headless:         Whether Playwright should run in headless mode.
         extra:            Arbitrary portal-specific values (export URLs, IDs, etc.)
@@ -47,12 +48,13 @@ class PortalConfig:
     password: str
     username_field: str = "username"
     password_field: str = "password"
+    submit_selector: str = "button[type='submit'], input[type='submit'], [type=submit], button.button--default, button"
     success_selector: str = ""
     headless: bool = True
     db_table: str | None = None
     db_schema: str = "dbo"
     db_upsert_key: str | list[str] | None = None
-    extra: dict = field(default_factory=dict, hash=False, compare=False)
+    extra: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
 
     def form_auth(self) -> "FormAuthHandler":
         """Return a ready-to-use :class:`~scraper.auth.form_auth.FormAuthHandler`.
@@ -72,6 +74,7 @@ class PortalConfig:
             password=self.password,
             username_field=self.username_field,
             password_field=self.password_field,
+            submit_selector=self.submit_selector,
             success_selector=self.success_selector,
         )
 
