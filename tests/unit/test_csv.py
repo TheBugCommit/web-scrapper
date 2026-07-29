@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from scraper.utils.csv import read_csv_rows
+from scraper.utils.csv import detect_file_encoding, read_csv_rows
 
 
 @pytest.fixture
@@ -82,3 +82,33 @@ def test_read_csv_rows_carburos_semicolon_separated(
     assert len(rows) == 2
     assert rows[0]["peso_kg"] == 6578.20
     assert rows[0]["timestamp"] == "2026-07-29 08:38:00+02:00"
+
+
+def test_read_csv_rows_utf16le_and_nan(tmp_path: Path) -> None:
+    csv_path = tmp_path / "utf16_nan.csv"
+    content = (
+        "Valor\tUDM\tValor\tUDM\tFecha/Hora\tFuente\n"
+        "281\tCM\t\tKG\t29/07/2026 8:38\t\n"
+    )
+    csv_path.write_text(content, encoding="utf-16le")
+
+    rows = read_csv_rows(
+        csv_path,
+        columns=["nivel_cm", "udm_cm", "peso_kg", "udm_kg", "timestamp", "fuente"],
+        tz="Europe/Madrid",
+    )
+    assert len(rows) == 1
+    assert rows[0]["nivel_cm"] == 281.0
+    assert rows[0]["peso_kg"] is None
+    assert rows[0]["fuente"] is None
+    assert rows[0]["timestamp"] == "2026-07-29 08:38:00+02:00"
+
+
+def test_detect_file_encoding(tmp_path: Path) -> None:
+    f_utf8 = tmp_path / "utf8.csv"
+    f_utf8.write_text("a,b,c\n1,2,3\n", encoding="utf-8-sig")
+    assert detect_file_encoding(f_utf8) == "utf-8-sig"
+
+    f_utf16 = tmp_path / "utf16.csv"
+    f_utf16.write_text("a\tb\tc\n1\t2\t3\n", encoding="utf-16le")
+    assert detect_file_encoding(f_utf16) == "utf-16le"

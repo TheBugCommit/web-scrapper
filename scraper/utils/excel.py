@@ -3,16 +3,6 @@ scraper.utils.excel
 ~~~~~~~~~~~~~~~~~~~
 Excel reading and data cleaning utilities for extracting rows from scraped
 spreadsheets (.xls, .xlsx) into database-ready dictionaries.
-
-Usage::
-
-    from scraper.utils.excel import read_excel_rows
-
-    rows = read_excel_rows(
-        "downloads/Balfeg.xls",
-        columns=["timestamp", "nivel_tanque_pct", "presion_bar"],
-    )
-    await storage.save_many(rows)
 """
 
 from __future__ import annotations
@@ -86,7 +76,7 @@ def read_excel_rows(
     )
 
     for col in df.columns:
-        if str(col).lower() in user_excludes:
+        if col.lower() in user_excludes:
             continue
 
         series = df[col]
@@ -95,8 +85,15 @@ def read_excel_rows(
         elif clean_comma_decimals and is_numeric_string_series(series):
             df[col] = clean_comma_decimal_series(series)
 
-    df = df.where(pd.notnull(df), None)
-    return [
-        {str(k): v for k, v in row.items()}
-        for row in df.to_dict(orient="records")
-    ]
+    import math
+
+    records: list[dict[str, Any]] = []
+    for row in df.to_dict(orient="records"):
+        clean_row: dict[str, Any] = {}
+        for k, v in row.items():
+            if v is None or pd.isna(v) or (isinstance(v, float) and math.isnan(v)):
+                clean_row[str(k)] = None
+            else:
+                clean_row[str(k)] = v
+        records.append(clean_row)
+    return records

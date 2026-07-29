@@ -18,30 +18,58 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
+def detect_file_encoding(path: Path) -> str:
+    """Detect the character encoding of a file using BOM checking and charset_normalizer."""
+    import codecs
+
+    raw = path.read_bytes()[:4]
+    if raw.startswith(codecs.BOM_UTF8):
+        return "utf-8-sig"
+    if raw.startswith(codecs.BOM_UTF16_LE):
+        return "utf-16le"
+    if raw.startswith(codecs.BOM_UTF16_BE):
+        return "utf-16be"
+
+    try:
+        import charset_normalizer
+        match = charset_normalizer.from_path(path).best()
+        if match and match.encoding:
+            enc = match.encoding.lower().replace("_", "-")
+            if enc == "utf-16-le":
+                return "utf-16le"
+            if enc == "utf-16-be":
+                return "utf-16be"
+            return enc
+    except Exception:
+        pass
+
+    return "utf-8"
+
+
 def _read_csv_df(path: Path) -> "pd.DataFrame":
     import pandas as pd
 
-    # Try automatic delimiter sniffing with common European/UTF encodings
-    for enc in ("utf-8-sig", "utf-8", "latin-1", "iso-8859-1"):
+    encoding = detect_file_encoding(path)
+
+    # Try automatic delimiter sniffing with the detected encoding
+    try:
+        df = pd.read_csv(path, sep=None, engine="python", encoding=encoding)
+        if len(df.columns) > 1:
+            return df
+    except Exception:
+        pass
+
+    # Fallback to explicit separators if sniffing didn't split columns
+    for sep in ("\t", ";", ","):
         try:
-            df = pd.read_csv(path, sep=None, engine="python", encoding=enc)
+            df = pd.read_csv(path, sep=sep, encoding=encoding)
             if len(df.columns) > 1:
                 return df
         except Exception:
             continue
 
-    # Fallback to explicit separators if sniffing didn't split columns
-    for sep in ("\t", ";", ","):
-        for enc in ("utf-8-sig", "utf-8", "latin-1"):
-            try:
-                df = pd.read_csv(path, sep=sep, encoding=enc)
-                if len(df.columns) > 1:
-                    return df
-            except Exception:
-                continue
-
     # Default fallback
-    return pd.read_csv(path)
+    return pd.read_csv(path, encoding=encoding)
 
 
 def read_csv_rows(
@@ -108,8 +136,15 @@ def read_csv_rows(
         elif clean_comma_decimals and is_numeric_string_series(series):
             df[col] = clean_comma_decimal_series(series)
 
-    df = df.where(pd.notnull(df), None)
-    return [
-        {str(k): v for k, v in row.items()}
-        for row in df.to_dict(orient="records")
-    ]
+    import math
+
+    records: list[dict[str, Any]] = []
+    for row in df.to_dict(orient="records"):
+        clean_row: dict[str, Any] = {}
+        for k, v in row.items():
+            if v is None or pd.isna(v) or (isinstance(v, float) and math.isnan(v)):
+                clean_row[str(k)] = None
+            else:
+                clean_row[str(k)] = v
+        records.append(clean_row)
+    return records
