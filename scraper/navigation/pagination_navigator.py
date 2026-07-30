@@ -55,7 +55,7 @@ class PaginationNavigator(AbstractNavigator):
     async def discover(
         self, page: "PageResponse", context: "ScraperContext"
     ) -> list[str]:
-        # ── Strategy 1: CSS selector for explicit "next" link ──────────
+        # Strategy 1: CSS selector for an explicit "next" link
         if self._next_selector:
             soup = BeautifulSoup(page.content, "lxml")
             next_tag = soup.select_one(self._next_selector)
@@ -65,7 +65,7 @@ class PaginationNavigator(AbstractNavigator):
                 logger.debug("PaginationNavigator: next link → %s", next_url)
                 return [next_url]
 
-        # ── Strategy 2: Increment ?page= query-string param ────────────
+        # Strategy 2: increment the ?page= query-string param
         parsed = urlparse(page.url)
         qs = parse_qs(parsed.query, keep_blank_values=True)
 

@@ -146,6 +146,7 @@ asyncio.run(main())
 
 ```python
 import asyncio
+import os
 from scraper import ScraperBuilder
 from scraper.auth import FormAuthHandler
 from scraper.backends import RequestsBackend
@@ -167,7 +168,10 @@ async def main():
         ))
         .with_navigator(PaginationNavigator(next_selector="a[rel=next]"))
         .with_extractor(CSSExtractor(rules={"title": "h1", "id": ".record-id"}))
-        .with_storage(SQLServerStorage.from_env())
+        .with_storage(SQLServerStorage(
+            connection_string=os.environ["SCRAPER_DB_CONNECTION_STRING"],
+            table="scraped_data",
+        ))
         .build()
     )
     result = await ScraperEngine(session).run()
@@ -335,7 +339,10 @@ session = (
     .with_interaction(FormInteractor(...))
     .with_navigator(PaginationNavigator(next_selector="a[rel=next]"))
     .with_extractor(CSSExtractor(rules={"title": "h1"}))
-    .with_storage(SQLServerStorage.from_env())
+    .with_storage(SQLServerStorage(
+        connection_string=os.environ["SCRAPER_DB_CONNECTION_STRING"],
+        table="scraped_data",
+    ))
     .build()
 )
 

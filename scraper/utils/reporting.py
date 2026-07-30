@@ -31,7 +31,6 @@ def format_result_summary(result: "ScrapeResult", title: str | None = None) -> s
     lines.append(f"  Finished - pages={len(result.pages)}  errors={len(result.errors)}")
     lines.append(f"  Duration: {result.duration_seconds:.1f}s")
 
-    # Collect downloads across all scraped pages
     all_downloads: list[str] = []
     for page in result.pages:
         downloads = page.data.get("_downloads", [])

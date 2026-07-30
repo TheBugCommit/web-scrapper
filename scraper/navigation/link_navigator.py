@@ -12,11 +12,9 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from bs4 import BeautifulSoup
-
 from scraper.navigation.base import AbstractNavigator
 from scraper.utils.logging import get_logger
-from scraper.utils.url import is_navigable, normalise, same_domain
+from scraper.utils.url import extract_links, same_domain
 
 if TYPE_CHECKING:
     from scraper.backends.base import PageResponse
@@ -33,7 +31,12 @@ class LinkNavigator(AbstractNavigator):
                        (e.g. ``"nav a"``, ``".content a"``).
         url_pattern:   Only follow links whose absolute URL matches this regex.
         max_links:     Maximum links to return per page (0 = unlimited).
-        same_origin:   If *True* (default) only return same-origin links.
+        same_origin:   If *True* (default) only return same-domain links (this
+                       flag name is kept for backward compatibility, but the
+                       check is deliberately domain-based, not origin-based —
+                       crawling generally wants to follow subdomains too. Use
+                       :class:`~scraper.debug.crawler.DebugCrawler` if you need
+                       strict same-origin behaviour for site-mapping instead.
     """
 
     def __init__(
@@ -51,27 +54,15 @@ class LinkNavigator(AbstractNavigator):
     async def discover(
         self, page: "PageResponse", context: "ScraperContext"
     ) -> list[str]:
-        soup = BeautifulSoup(page.content, "lxml")
-        seen: set[str] = set()
+        candidates = extract_links(page.content, page.url, selector=self._css_filter)
+
         found: list[str] = []
-
-        for tag in soup.select(self._css_filter):
-            raw_href = tag.get("href", "")
-            href = raw_href[0] if isinstance(raw_href, list) else raw_href.strip()
-            if not href or href.startswith("#"):
-                continue
-
-            abs_url = normalise(href, base=page.url)
-            if not is_navigable(abs_url):
-                continue
+        for abs_url in candidates:
             if self._same_origin and not same_domain(abs_url, page.url):
-                continue
-            if abs_url in seen:
                 continue
             if self._url_re and not self._url_re.search(abs_url):
                 continue
 
-            seen.add(abs_url)
             found.append(abs_url)
 
             if self._max_links and len(found) >= self._max_links:

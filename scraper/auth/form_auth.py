@@ -76,21 +76,14 @@ class FormAuthHandler(AbstractAuthHandler):
         self._extra_fields = extra_fields or {}
         self._post_login_url = post_login_url
 
-    # ── AbstractAuthHandler ───────────────────────────────────────────────
-
     async def authenticate(
         self, backend: AbstractBackend, context: "ScraperContext"
     ) -> None:
-        """Detect backend type and delegate to the appropriate login flow."""
-        # Late import to avoid circular dependency
-        from scraper.backends.playwright_backend import PlaywrightBackend
-
-        if isinstance(backend, PlaywrightBackend):
+        """Detect backend capability and delegate to the appropriate login flow."""
+        if backend.supports_interactive:
             await self._playwright_login(backend, context)
         else:
             await self._http_login(backend, context)
-
-    # ── Playwright login ──────────────────────────────────────────────────
 
     async def _playwright_login(
         self, backend: "Any", context: "ScraperContext"
@@ -103,7 +96,6 @@ class FormAuthHandler(AbstractAuthHandler):
             )
             await dismiss_cookie_banners(page)
 
-            # Fill extra hidden fields first
             for name, value in self._extra_fields.items():
                 try:
                     await page.fill(f"[name={name}]", value)
@@ -117,13 +109,11 @@ class FormAuthHandler(AbstractAuthHandler):
             async with page.expect_navigation(timeout=30_000):
                 await page.click(self._submit_selector)
 
-            # Navigate to post-login URL if specified
             if self._post_login_url:
                 await page.goto(self._post_login_url, wait_until="networkidle")
 
             await dismiss_cookie_banners(page)
 
-            # Verify login success
             if self._success_selector:
                 element = await page.query_selector(self._success_selector)
                 if element is None:
@@ -144,14 +134,11 @@ class FormAuthHandler(AbstractAuthHandler):
         finally:
             await page.close()
 
-    # ── HTTP-only login ───────────────────────────────────────────────────
-
     async def _http_login(
         self, backend: AbstractBackend, context: "ScraperContext"
     ) -> None:
         logger.info("FormAuth (HTTP): fetching login page %s", self._login_url)
 
-        # Step 1 — GET the login page to harvest hidden fields + form action
         login_page = await backend.get(self._login_url)
         soup = BeautifulSoup(login_page.content, "lxml")
 
@@ -161,7 +148,6 @@ class FormAuthHandler(AbstractAuthHandler):
                 f"No <form> element found on login page: {self._login_url}"
             )
 
-        # Determine the POST action URL
         action = str(form.get("action", self._login_url))
         if not action.startswith("http"):
             from urllib.parse import urljoin
@@ -176,16 +162,13 @@ class FormAuthHandler(AbstractAuthHandler):
                 if name and name != "None":
                     post_data[name] = value
 
-        # Add credentials + any caller-supplied overrides
         post_data[self._username_field] = self._username
         post_data[self._password_field] = self._password
         post_data.update(self._extra_fields)
 
-        # Step 2 — POST credentials
         logger.debug("FormAuth: POSTing to %s  fields=%s", action, list(post_data.keys()))
         response = await backend.post(action, data=post_data)
 
-        # Step 3 — Verify session
         if self._success_selector:
             resp_soup = BeautifulSoup(response.content, "lxml")
             if not resp_soup.select(self._success_selector):
@@ -194,7 +177,7 @@ class FormAuthHandler(AbstractAuthHandler):
                     f"not found in response from {action}"
                 )
 
-        if not response.cookies and not backend.get_cookies():
+        if not response.cookies and not await backend.get_cookies():
             logger.warning(
                 "FormAuth: no session cookies detected after login — "
                 "the portal may require a success_selector check."
@@ -202,6 +185,5 @@ class FormAuthHandler(AbstractAuthHandler):
 
         logger.info("FormAuth (HTTP): ✅ authenticated successfully")
 
-        # Navigate to post-login URL if specified
         if self._post_login_url:
             await backend.get(self._post_login_url)

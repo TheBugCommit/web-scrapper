@@ -62,7 +62,6 @@ def configure_logging(
         )
     ]
 
-    # ── Rotating Log Files ────────────────────────────────────────────────────
     if enable_file_logging and log_dir:
         target_dir = Path(log_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -72,7 +71,6 @@ def configure_logging(
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
-        # 1. General log file (all messages at current level)
         general_file = target_dir / "scraper.log"
         fh_general = RotatingFileHandler(
             general_file,
@@ -84,7 +82,6 @@ def configure_logging(
         fh_general.setFormatter(file_formatter)
         handlers.append(fh_general)
 
-        # 2. Error log file (only ERROR and CRITICAL messages)
         error_file = target_dir / "error.log"
         fh_error = RotatingFileHandler(
             error_file,
@@ -113,3 +110,62 @@ def get_logger(name: str) -> logging.Logger:
     """Return a library logger. The name should be ``__name__``."""
     configure_logging()
     return logging.getLogger(name)
+
+
+def get_portal_logger(
+    portal_key: str,
+    log_dir: str | Path,
+    debug: bool = False,
+    max_bytes: int = 10_485_760,
+    backup_count: int = 5,
+) -> logging.Logger:
+    """Return a logger dedicated to one portal, with its own rotating log files.
+
+    Unlike :func:`configure_logging` (a process-wide singleton — the first
+    call wins, later calls with a different ``log_dir`` are silent no-ops),
+    this attaches handlers directly to a named ``portals.<portal_key>``
+    logger. Running multiple portals in the same process (e.g. concurrently
+    via ``asyncio.gather``) each gets a fully isolated, rotated log file
+    under its own ``log_dir`` — no cross-portal interference, and nothing
+    written to the console, so concurrent portals never interleave their
+    narrative output on stdout.
+
+    Idempotent: a second call for the same ``portal_key`` returns the same
+    logger without duplicating handlers.
+    """
+    logger = logging.getLogger(f"portals.{portal_key}")
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    logger.propagate = False
+
+    target_dir = Path(log_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    file_formatter = logging.Formatter(
+        fmt="[%(asctime)s] [%(levelname)-8s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    fh_general = RotatingFileHandler(
+        target_dir / "scraper.log",
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    fh_general.setLevel(logger.level)
+    fh_general.setFormatter(file_formatter)
+    logger.addHandler(fh_general)
+
+    fh_error = RotatingFileHandler(
+        target_dir / "error.log",
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    fh_error.setLevel(logging.ERROR)
+    fh_error.setFormatter(file_formatter)
+    logger.addHandler(fh_error)
+
+    return logger

@@ -37,10 +37,13 @@ Example::
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from collections import defaultdict
 from typing import Any, Awaitable, Callable, Union
+
+from scraper.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 Handler = Callable[[dict[str, Any]], Union[None, Awaitable[None]]]
 
@@ -105,8 +108,7 @@ class EventDispatcher:
                 if inspect.isawaitable(result):
                     await result
             except Exception as exc:  # noqa: BLE001
-                import logging
-                logging.getLogger(__name__).warning(
+                logger.warning(
                     "EventDispatcher: handler %s for '%s' raised %s",
                     handler.__name__,
                     event,

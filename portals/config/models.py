@@ -3,14 +3,16 @@ portals.config.models
 ~~~~~~~~~~~~~~~~~~~~~
 ``PortalConfig`` — immutable descriptor for one web portal.
 
-Contains everything needed to connect to a portal (URLs, field selectors,
-browser options) and the credentials loaded from the secrets file
-(never committed to version control).
+Contains everything needed to connect to a portal (URLs, field selectors)
+and the credentials loaded from the secrets file (never committed to
+version control). Execution/browser options (headless mode, concurrency,
+timeouts...) are environment-only — see ``PortalConfig.get_builder()``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -36,7 +38,12 @@ class PortalConfig:
         password_field:   HTML ``name`` attribute of password input.
         submit_selector:  CSS selector of the submit button.
         success_selector: CSS selector that appears only after a successful login.
-        headless:         Whether Playwright should run in headless mode.
+        db_default_start_date: Fallback start date used by flows that resume
+                          scraping from the last stored row (see
+                          ``repository.get_last_date``), when the table is
+                          empty or has never been populated. Configured per
+                          portal in ``portals.yml`` instead of being hardcoded
+                          in each flow.
         extra:            Arbitrary portal-specific values (export URLs, IDs, etc.)
                           defined freely in ``portals.yml`` and accessed via
                           ``portal.extra["key"]``.
@@ -52,10 +59,10 @@ class PortalConfig:
     password_field: str = "password"
     submit_selector: str = "button[type='submit'], input[type='submit'], [type=submit], button.button--default, button"
     success_selector: str = ""
-    headless: bool = True
     db_table: str | None = None
     db_schema: str = "dbo"
     db_upsert_key: str | list[str] | None = None
+    db_default_start_date: date | None = None
     extra: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
 
     def form_auth(self) -> "FormAuthHandler":
@@ -72,41 +79,45 @@ class PortalConfig:
             success_selector=self.success_selector,
         )
 
-    def get_storage(self, connection_string: str | None = None) -> SQLServerStorage:
-        """Return a configured SQLServerStorage for this portal's table."""
-        import os
+    def get_storage(self, connection_string: str) -> SQLServerStorage:
+        """Return a configured SQLServerStorage for this portal's table.
+
+        Args:
+            connection_string: SQLAlchemy connection string, resolved by the
+                caller (e.g. from the ``SCRAPER_DB_CONNECTION_STRING`` env
+                var). ``PortalConfig`` does not read the environment itself.
+        """
         from scraper.storage.sqlserver_storage import SQLServerStorage
 
-        conn_str = connection_string or os.getenv("SCRAPER_DB_CONNECTION_STRING")
-        if not conn_str:
-            raise ValueError(
-                "No SQL Server connection string provided and SCRAPER_DB_CONNECTION_STRING "
-                "is not set in the environment."
-            )
+        if not connection_string:
+            raise ValueError("A non-empty connection_string is required.")
+
         table = self.db_table or "scraped_data"
         schema = self.db_schema or "dbo"
         upsert_key = self.db_upsert_key
 
         return SQLServerStorage(
-            connection_string=conn_str,
+            connection_string=connection_string,
             table=table,
             upsert_key=upsert_key,
             schema_prefix=schema,
         )
 
-    def get_repository(self, connection_string: str | None = None) -> SQLServerRepository:
-        """Return a configured SQLServerRepository for this portal's schema."""
-        import os
+    def get_repository(self, connection_string: str) -> SQLServerRepository:
+        """Return a configured SQLServerRepository for this portal's schema.
+
+        Args:
+            connection_string: SQLAlchemy connection string, resolved by the
+                caller (e.g. from the ``SCRAPER_DB_CONNECTION_STRING`` env
+                var). ``PortalConfig`` does not read the environment itself.
+        """
         from scraper.storage.repository import SQLServerRepository
 
-        conn_str = connection_string or os.getenv("SCRAPER_DB_CONNECTION_STRING")
-        if not conn_str:
-            raise ValueError(
-                "No SQL Server connection string provided and SCRAPER_DB_CONNECTION_STRING "
-                "is not set in the environment."
-            )
+        if not connection_string:
+            raise ValueError("A non-empty connection_string is required.")
+
         schema = self.db_schema or "dbo"
-        return SQLServerRepository(connection_string=conn_str, default_schema=schema)
+        return SQLServerRepository(connection_string=connection_string, default_schema=schema)
 
     def get_builder(self, url: str | None = None) -> "ScraperBuilder":
         """Return a pre-configured ScraperBuilder with generic environment settings."""
@@ -120,12 +131,9 @@ class PortalConfig:
         timeout_ms = int(os.getenv("SCRAPER_TIMEOUT_MS", "90000"))
         debug_mode = os.getenv("SCRAPER_DEBUG", "false").lower() in ("1", "true", "yes")
 
-        headless_env = os.getenv("SCRAPER_HEADLESS")
-        headless = (
-            headless_env.lower() in ("1", "true", "yes")
-            if headless_env is not None
-            else self.headless
-        )
+        # Headless is environment-only (never portals.yml) so production can
+        # never accidentally launch a visible browser: unset -> headless.
+        headless = os.getenv("SCRAPER_HEADLESS", "true").lower() in ("1", "true", "yes")
 
         target_url = url or self.portal_url
 

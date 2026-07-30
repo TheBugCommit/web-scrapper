@@ -52,4 +52,4 @@ class ScraperSession:
 
     def __post_init__(self) -> None:
         if not self.start_urls and self.context.base_url:
-            object.__setattr__(self, "start_urls", [self.context.base_url])
+            self.start_urls = [self.context.base_url]

@@ -1,18 +1,18 @@
 """scraper.interaction — page interaction layer."""
 
-from .base import AbstractFormAction, AbstractPageInteractor, InteractionResult
-from .form_actions import (
+from .actions import (
     CheckboxAction,
     ClickAction,
     DownloadSubmitAction,
     FillAction,
-    FormInteractor,
     NavigateAction,
     PressKeyAction,
     SelectAction,
     UncheckAllAction,
     WaitForAction,
 )
+from .base import AbstractFormAction, AbstractPageInteractor, InteractionResult
+from .interactors import FormInteractor
 from .keys import Key, KeyCombo
 
 __all__ = [

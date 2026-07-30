@@ -36,7 +36,7 @@ class AbstractAuthHandler(ABC):
             async def authenticate(
                 self, backend: AbstractBackend, context: ScraperContext
             ) -> None:
-                backend.set_cookies({"auth_token": self._token})
+                await backend.set_cookies({"auth_token": self._token})
     """
 
     @abstractmethod

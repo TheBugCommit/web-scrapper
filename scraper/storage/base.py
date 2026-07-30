@@ -19,7 +19,26 @@ Implement this class to add a new output target::
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass(frozen=True)
+class StorageMeta:
+    """Public metadata that a storage sink exposes to the engine for logging.
+
+    The engine uses this to include table/schema/key info in event payloads
+    without breaking encapsulation by accessing private attributes.
+
+    Attributes:
+        table_name:  Target table name.
+        schema:      Database schema (e.g. ``"dbo"``).
+        upsert_key:  Column(s) used as the upsert key, or ``None`` for pure inserts.
+    """
+
+    table_name: str
+    schema: str = "dbo"
+    upsert_key: str | list[str] | None = None
 
 
 class AbstractStorage(ABC):
@@ -37,6 +56,15 @@ class AbstractStorage(ABC):
 
     async def close(self) -> None:
         """Release storage resources."""
+
+    @property
+    def storage_meta(self) -> StorageMeta | None:
+        """Optional metadata exposed to the engine for logging.
+
+        Override in concrete implementations to surface table name, schema,
+        and upsert key without the engine having to touch private attributes.
+        """
+        return None
 
     @abstractmethod
     async def save(self, data: dict[str, Any]) -> None:

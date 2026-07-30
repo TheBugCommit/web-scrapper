@@ -59,8 +59,8 @@ Repository = "https://github.com/TheBugCommit/web-scrapper"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["scraper*"]
-exclude = ["portals*", "tests*", "data*", "downloads*", "logs*"]
+include = ["scraper*", "portals*"]
+exclude = ["tests*", "data*", "downloads*", "logs*"]
 
 [tool.black]
 line-length = 100

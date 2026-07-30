@@ -33,11 +33,6 @@ _RETRYABLE = (
 )
 
 DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
@@ -49,8 +44,10 @@ class RequestsBackend(AbstractBackend):
     Parameters:
         timeout:     Request timeout in seconds.
         max_retries: Maximum retry attempts on transient failures.
-        headers:     Additional headers merged with the default User-Agent set.
+        headers:     Additional headers merged with the default header set.
         verify_ssl:  Whether to verify TLS certificates.
+        user_agent:  Custom User-Agent string. If ``None``, httpx's own
+                     default is used (no hardcoded browser UA).
     """
 
     def __init__(
@@ -59,17 +56,20 @@ class RequestsBackend(AbstractBackend):
         max_retries: int = 3,
         headers: dict[str, str] | None = None,
         verify_ssl: bool = True,
+        user_agent: str | None = None,
     ) -> None:
         self._timeout = timeout
         self._max_retries = max_retries
         self._extra_headers = headers or {}
         self._verify_ssl = verify_ssl
+        self._user_agent = user_agent
         self._client: httpx.AsyncClient | None = None
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────
-
     async def open(self) -> None:
-        merged_headers = {**DEFAULT_HEADERS, **self._extra_headers}
+        merged_headers = {**DEFAULT_HEADERS}
+        if self._user_agent is not None:
+            merged_headers["User-Agent"] = self._user_agent
+        merged_headers.update(self._extra_headers)
         self._client = httpx.AsyncClient(
             headers=merged_headers,
             timeout=self._timeout,
@@ -83,8 +83,6 @@ class RequestsBackend(AbstractBackend):
             await self._client.aclose()
             self._client = None
         logger.debug("RequestsBackend: client closed")
-
-    # ── Internal helpers ──────────────────────────────────────────────────
 
     def _client_or_raise(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -102,8 +100,6 @@ class RequestsBackend(AbstractBackend):
             headers=dict(r.headers),
             cookies={k: v for k, v in r.cookies.items()},
         )
-
-    # ── HTTP primitives ───────────────────────────────────────────────────
 
     async def get(self, url: str, **kwargs: Any) -> PageResponse:
         """Async GET with automatic retry on transient failures."""
@@ -145,14 +141,12 @@ class RequestsBackend(AbstractBackend):
 
         return await _post()
 
-    # ── Cookie helpers ────────────────────────────────────────────────────
-
-    def set_cookies(self, cookies: dict[str, str]) -> None:
+    async def set_cookies(self, cookies: dict[str, str]) -> None:
         client = self._client_or_raise()
         for name, value in cookies.items():
             client.cookies.set(name, value)
 
-    def get_cookies(self) -> dict[str, str]:
+    async def get_cookies(self) -> dict[str, str]:
         if self._client is None:
             return {}
         return {name: value for name, value in self._client.cookies.items()}

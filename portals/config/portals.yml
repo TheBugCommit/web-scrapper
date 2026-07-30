@@ -39,13 +39,11 @@ portals:
     export_url: "https://www.global-datacenter.de/web/export/xls.html"
     module_id:  "244425"      # Balfegó module
 
-    # Browser options
-    headless: false           # true in production
-
     # SQL Server target table configuration
     db_table:      "Telemetria_Tanque_N"
     db_schema:     "dbo"
     db_upsert_key: "timestamp"
+    db_default_start_date: "2024-05-01"  # fallback start date when the table is empty
 
   carburos_metalicos:
     name: "Carburos Metalicos"
@@ -56,10 +54,10 @@ portals:
     submit_selector: "button.button--default, [type=submit], button"
     success_selector: ".app-container"
     export_url: "https://apdirect.airproducts.com/Tanks/Readings/175738"
-    headless: false
     db_table:      "Telemetria_Tanque_Co2"
     db_schema:     "dbo"
     db_upsert_key: "timestamp"
+    db_default_start_date: "2024-05-01"  # fallback start date when the table is empty
 
 
   # ── Template for adding a new portal ─────────────────────────────────────────
@@ -70,10 +68,10 @@ portals:
   #   username_field: "email"
   #   password_field: "password"
   #   success_selector: ".dashboard"
-  #   headless: true
   #   db_table:      "Telemetria_Tanque_N"
   #   db_schema:     "dbo"
   #   db_upsert_key: "timestamp"
+  #   db_default_start_date: "2024-05-01"
   #   # Add credentials to .env.portals:
   #   #   EXAMPLE_PORTAL_USERNAME=myuser
   #   #   EXAMPLE_PORTAL_PASSWORD=mypass

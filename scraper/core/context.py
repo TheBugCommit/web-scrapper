@@ -2,6 +2,9 @@
 scraper.core.context
 ~~~~~~~~~~~~~~~~~~~~
 Immutable configuration container for a scraping run.
+
+Contains only browser/HTTP navigation concerns.
+Database configuration belongs to the storage layer (SQLServerStorage).
 All values are passed explicitly; no environment variables are read by the library.
 """
 
@@ -16,8 +19,9 @@ from typing import Any
 class ScraperContext:
     """Shared, read-only configuration passed throughout the scraping pipeline.
 
-    All fields have sensible static defaults. Explicit constructor arguments
-    always take precedence.
+    Contains ONLY navigation / browser concerns.  Storage configuration
+    (connection strings, table names) belongs to the storage layer and is
+    configured directly on :class:`~scraper.storage.sqlserver_storage.SQLServerStorage`.
 
     Attributes:
         base_url:           Root URL for the scraping session.
@@ -28,8 +32,6 @@ class ScraperContext:
         max_retries:        Maximum retry attempts on transient failures.
         download_dir:       Directory for downloaded files.
         headless:           Run Playwright in headless mode.
-        db_connection_string: SQLAlchemy connection string for SQL Server.
-        db_table:           Target database table for scraped rows.
         extra:              Arbitrary key-value pairs for custom adapters.
     """
 
@@ -41,6 +43,4 @@ class ScraperContext:
     max_retries: int = 5
     download_dir: Path = field(default_factory=lambda: Path("./downloads"))
     headless: bool = True
-    db_connection_string: str = ""
-    db_table: str = "scraped_data"
     extra: dict[str, Any] = field(default_factory=dict)

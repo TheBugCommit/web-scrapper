@@ -3,14 +3,8 @@ scraper.backends.playwright_backend
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 JS-capable backend powered by Microsoft Playwright (async API).
 
-This backend launches a real Chromium / Firefox / WebKit browser instance
-and renders pages with full JavaScript execution.  It shares cookies
-across requests through the same :class:`playwright.async_api.BrowserContext`.
-
-Usage::
-
-    async with PlaywrightBackend(browser="chromium", headless=True) as backend:
-        response = await backend.get("https://spa-app.example.com")
+Launches a real Chromium / Firefox / WebKit browser instance and shares
+cookies across requests through the same :class:`playwright.async_api.BrowserContext`.
 
 Playwright must be installed separately::
 
@@ -42,7 +36,11 @@ class PlaywrightBackend(AbstractBackend):
         extra_args:  Additional browser launch arguments.
         wait_until:  When to consider navigation finished.
                      Options: ``"load"``, ``"domcontentloaded"``, ``"networkidle"``.
+        user_agent:  Custom User-Agent string. If ``None``, Playwright's own
+                     (auto-updating) default is used.
     """
+
+    supports_interactive = True
 
     def __init__(
         self,
@@ -52,6 +50,7 @@ class PlaywrightBackend(AbstractBackend):
         slow_mo: int = 0,
         extra_args: list[str] | None = None,
         wait_until: str = "networkidle",
+        user_agent: str | None = None,
     ) -> None:
         self._browser_type = browser
         self._headless = headless
@@ -59,12 +58,11 @@ class PlaywrightBackend(AbstractBackend):
         self._slow_mo = slow_mo
         self._extra_args = extra_args or []
         self._wait_until = wait_until
+        self._user_agent = user_agent
 
         self._playwright: Any = None
         self._browser: Any = None
         self._context: Any = None
-
-    # ── Lifecycle ─────────────────────────────────────────────────────────
 
     async def open(self) -> None:
         from playwright.async_api import async_playwright  # lazy import
@@ -81,14 +79,10 @@ class PlaywrightBackend(AbstractBackend):
             slow_mo=self._slow_mo,
             args=self._extra_args,
         )
-        self._context = await self._browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            ignore_https_errors=True,
-        )
+        context_kwargs: dict[str, Any] = {"ignore_https_errors": True}
+        if self._user_agent is not None:
+            context_kwargs["user_agent"] = self._user_agent
+        self._context = await self._browser.new_context(**context_kwargs)
         logger.debug("PlaywrightBackend: browser context ready")
 
     async def close(self) -> None:
@@ -103,8 +97,6 @@ class PlaywrightBackend(AbstractBackend):
             self._playwright = None
         logger.debug("PlaywrightBackend: browser closed")
 
-    # ── Internal helpers ──────────────────────────────────────────────────
-
     def _context_or_raise(self) -> Any:
         if self._context is None:
             raise RuntimeError(
@@ -112,21 +104,20 @@ class PlaywrightBackend(AbstractBackend):
             )
         return self._context
 
-    async def _page_to_response(self, page: Any, url: str) -> PageResponse:
+    async def _page_to_response(
+        self, page: Any, url: str, status_code: int = 200
+    ) -> PageResponse:
         """Serialise a Playwright Page into a :class:`PageResponse`."""
         content = await page.content()
-        response_obj = page.url  # final URL after redirects
-        # Retrieve cookies from the context
+        final_url = page.url
         cookies_raw = await self._context.cookies()
         cookies = {c["name"]: c["value"] for c in cookies_raw}
         return PageResponse(
-            url=response_obj,
-            status_code=200,  # Playwright does not expose status on page directly
+            url=final_url,
+            status_code=status_code,
             content=content,
             cookies=cookies,
         )
-
-    # ── HTTP primitives ───────────────────────────────────────────────────
 
     async def get(self, url: str, **kwargs: Any) -> PageResponse:
         """Navigate to *url* and return fully-rendered HTML."""
@@ -134,9 +125,12 @@ class PlaywrightBackend(AbstractBackend):
         page = await ctx.new_page()
         try:
             logger.debug("Playwright GET %s", url)
-            await page.goto(url, timeout=self._timeout, wait_until=self._wait_until)
+            nav_response = await page.goto(
+                url, timeout=self._timeout, wait_until=self._wait_until
+            )
             await dismiss_cookie_banners(page)
-            return await self._page_to_response(page, url)
+            status_code = nav_response.status if nav_response is not None else 200
+            return await self._page_to_response(page, url, status_code=status_code)
         finally:
             await page.close()
 
@@ -169,7 +163,10 @@ class PlaywrightBackend(AbstractBackend):
         page = await browser_ctx.new_page()
         try:
             logger.debug("Playwright GET (interactive) %s", url)
-            await page.goto(url, timeout=self._timeout, wait_until=self._wait_until)
+            nav_response = await page.goto(
+                url, timeout=self._timeout, wait_until=self._wait_until
+            )
+            status_code = nav_response.status if nav_response is not None else 200
             await dismiss_cookie_banners(page)
 
             all_downloads: list[str] = []
@@ -186,7 +183,7 @@ class PlaywrightBackend(AbstractBackend):
 
             return PageResponse(
                 url=page.url,
-                status_code=200,
+                status_code=status_code,
                 content=final_content,
                 cookies=cookies,
                 metadata={"downloads": all_downloads},
@@ -206,7 +203,6 @@ class PlaywrightBackend(AbstractBackend):
         page = await ctx.new_page()
         try:
             logger.debug("Playwright POST %s", url)
-            # Use the Playwright request API for raw POST
             response = await page.request.post(url, form=data)
             content = await response.text()
             cookies_raw = await self._context.cookies()
@@ -221,26 +217,18 @@ class PlaywrightBackend(AbstractBackend):
         finally:
             await page.close()
 
-    # ── Cookie helpers ────────────────────────────────────────────────────
-
-    def set_cookies(self, cookies: dict[str, str]) -> None:
+    async def set_cookies(self, cookies: dict[str, str]) -> None:
         """Inject cookies into the shared browser context."""
         if self._context is None:
             raise RuntimeError("Backend is not open.")
-        import asyncio
-
         cookie_list = [{"name": k, "value": v, "url": "about:blank"} for k, v in cookies.items()]
-        asyncio.get_event_loop().run_until_complete(self._context.add_cookies(cookie_list))
+        await self._context.add_cookies(cookie_list)
 
-    def get_cookies(self) -> dict[str, str]:
+    async def get_cookies(self) -> dict[str, str]:
         if self._context is None:
             return {}
-        import asyncio
-
-        cookies_raw = asyncio.get_event_loop().run_until_complete(self._context.cookies())
+        cookies_raw = await self._context.cookies()
         return {c["name"]: c["value"] for c in cookies_raw}
-
-    # ── Playwright-specific helpers ───────────────────────────────────────
 
     async def new_page(self) -> Any:
         """Return a raw Playwright :class:`~playwright.async_api.Page`.

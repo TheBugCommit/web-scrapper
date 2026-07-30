@@ -16,7 +16,7 @@ Usage in ScraperBuilder::
                 tz="Europe/Madrid",
             )
         )
-        .with_storage(portal.get_storage())
+        .with_storage(portal.get_storage(connection_string))
         .build()
     )
 """
@@ -43,7 +43,9 @@ class CSVExtractor(AbstractExtractor):
         columns:              Optional column mapping (sequential list or header dict).
         clean_comma_decimals: Replace Spanish comma decimals (e.g. ``"6.578,20"`` -> ``6578.20``).
         exclude_clean_cols:   Column names to exempt from numeric conversion (e.g. timestamps).
-        tz:                   Timezone name for timestamp localization/conversion (e.g. ``"Europe/Madrid"``).
+        tz:                   Timezone name for timestamp localization/conversion
+                              (e.g. ``"Europe/Madrid"``), or ``None`` (default) to leave
+                              timestamps timezone-naive.
     """
 
     def __init__(
@@ -51,7 +53,7 @@ class CSVExtractor(AbstractExtractor):
         columns: list[str] | dict[str, str] | None = None,
         clean_comma_decimals: bool = True,
         exclude_clean_cols: list[str] | None = None,
-        tz: str | None = "Europe/Madrid",
+        tz: str | None = None,
     ) -> None:
         self.columns = columns
         self.clean_comma_decimals = clean_comma_decimals

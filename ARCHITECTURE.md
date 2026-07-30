@@ -94,7 +94,12 @@ scraper/                         ← REUSABLE SCRAPING FRAMEWORK PACKAGE
 │   └── form_auth.py             ← HTML form login (HTTP + Playwright)
 ├── interaction/
 │   ├── base.py                  ← AbstractPageInteractor + AbstractFormAction
-│   └── form_actions.py          ← FormInteractor + form actions (Select, Checkbox, DownloadSubmit...)
+│   ├── actions/                 ← Concrete AbstractFormAction implementations
+│   │   ├── form.py              ← Select, Checkbox, UncheckAll, Fill
+│   │   ├── navigation.py        ← Click, Navigate, PressKey, WaitFor
+│   │   └── download.py          ← DownloadSubmitAction
+│   └── interactors/
+│       └── form_interactor.py   ← FormInteractor orchestrator
 ├── navigation/
 │   ├── base.py                  ← AbstractNavigator
 │   ├── link_navigator.py        ← Follow <a href> links
@@ -107,15 +112,17 @@ scraper/                         ← REUSABLE SCRAPING FRAMEWORK PACKAGE
 │   ├── excel_extractor.py       ← Excel (XLS/XLSX) table extraction
 │   └── file_downloader.py       ← Concurrent file download
 ├── storage/
-│   ├── base.py                  ← AbstractStorage
+│   ├── base.py                  ← AbstractStorage + StorageMeta
+│   ├── engine_factory.py        ← Shared SQLAlchemy engine creation
 │   ├── repository.py            ← Repository pattern for SQL telemetry tables
 │   └── sqlserver_storage.py     ← SQL Server (SQLAlchemy + pyodbc + MERGE/upsert)
 ├── debug/
 │   └── crawler.py               ← BFS DebugCrawler → CrawlNode tree
 ├── events/
-│   └── dispatcher.py            ← Async EventDispatcher (observer)
+│   ├── dispatcher.py            ← Async EventDispatcher (observer)
+│   └── default_handlers.py      ← create_default_dispatcher() — standard progress handlers
 ├── middleware/
-│   └── rate_limiter.py          ← Per-host async rate limiter
+│   └── rate_limiter.py          ← Per-host async rate limiter (wired into ScraperEngine)
 └── utils/
     ├── url.py                   ← URL normalisation / link extraction
     └── logging.py               ← Rich console + RotatingFileHandler logs (scraper.log & error.log)
@@ -172,16 +179,18 @@ All engine and infrastructure settings can be overridden via a `.env` file locat
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SCRAPER_DB_CONNECTION_STRING` | — | SQLAlchemy SQL Server connection string |
-| `SCRAPER_DB_TABLE` | `scraped_data` | Target table for extracted rows |
-| `SCRAPER_DB_UPSERT_KEY` | — | Column to use as MERGE key (optional) |
-| `SCRAPER_DB_SCHEMA` | `dbo` | SQL Server schema |
+| `SCRAPER_DB_CONNECTION_STRING` | — | SQLAlchemy SQL Server connection string. Read explicitly by each portal `flow.py` and passed to `portal.get_storage()` / `portal.get_repository()` — not read by `PortalConfig` itself. |
 | `SCRAPER_MAX_CONCURRENT` | `5` | Concurrent page workers |
 | `SCRAPER_RATE_LIMIT_DELAY` | `1.0` | Seconds between requests per host |
 | `SCRAPER_MAX_RETRIES` | `3` | Retry attempts on transient failures |
 | `SCRAPER_DOWNLOAD_DIR` | `./downloads` | Local path for downloaded files |
 | `SCRAPER_DEBUG` | `false` | Enable debug logging + verbose output |
 | `SCRAPER_HEADLESS` | `true` | Playwright headless mode |
+
+Target table, schema, upsert key, and the fallback start date used to resume
+scraping are **not** environment variables — they are configured per portal
+in `portals.yml` (`db_table`, `db_schema`, `db_upsert_key`, `db_default_start_date`)
+and exposed via `PortalConfig`.
 
 > **Note**: `portals/.env` is exclusively for infrastructure and engine defaults. It must **never** contain portal-specific credentials.
 
@@ -254,7 +263,7 @@ The `SQLServerStorage` sink:
 
 1. **Auto-creates the table** on first insert using row keys as column names
 2. **Serialises complex types** (lists, dicts) as JSON strings (`NVARCHAR(MAX)`)
-3. **Supports MERGE (upsert)** when `upsert_key` / `SCRAPER_DB_UPSERT_KEY` is set
+3. **Supports MERGE (upsert)** when `upsert_key` (constructor arg, or `db_upsert_key` in `portals.yml`) is set
 4. **Runs DB I/O in a thread-pool executor** so it never blocks the async event loop
 5. **Connection string** follows SQLAlchemy format with `mssql+pyodbc://`
 

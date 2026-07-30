@@ -28,8 +28,6 @@ if TYPE_CHECKING:
     from scraper.core.context import ScraperContext
 
 
-# ── Result type ────────────────────────────────────────────────────────────────
-
 @dataclass
 class InteractionResult:
     """What a :class:`AbstractPageInteractor` produces after interacting.
@@ -38,7 +36,7 @@ class InteractionResult:
         page_content: Final HTML of the page after all actions have run.
                       Used by extractors downstream.
         downloads:    List of local file paths produced by any
-                      :class:`~scraper.interaction.form_actions.DownloadSubmitAction`.
+                      :class:`~scraper.interaction.actions.download.DownloadSubmitAction`.
         metadata:     Arbitrary key-value data attached by actions.
     """
 
@@ -46,8 +44,6 @@ class InteractionResult:
     downloads: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-
-# ── Action ABC ─────────────────────────────────────────────────────────────────
 
 class AbstractFormAction(ABC):
     """One atomic DOM interaction applied to a live Playwright page.
@@ -73,8 +69,6 @@ class AbstractFormAction(ABC):
         return []
 
 
-# ── Interactor ABC ─────────────────────────────────────────────────────────────
-
 class AbstractPageInteractor(ABC):
     """Orchestrates a sequence of :class:`AbstractFormAction`\\ s on a page.
 
@@ -83,7 +77,7 @@ class AbstractPageInteractor(ABC):
     Example::
 
         from scraper.interaction import FormInteractor
-        from scraper.interaction.form_actions import SelectAction, CheckboxAction
+        from scraper.interaction.actions import SelectAction, CheckboxAction
 
         interactor = FormInteractor(actions=[
             SelectAction("select[name='month']", "7"),

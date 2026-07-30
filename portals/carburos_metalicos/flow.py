@@ -21,18 +21,16 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import sys
-from datetime import date, timedelta
+import os
+from datetime import date
 from pathlib import Path
-from typing import Any
-
-# Ensure project root is in sys.path so 'portals' package can be imported directly
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scraper import (
     CSVExtractor,
-    EventDispatcher,
+    create_default_dispatcher,
+    format_result_summary,
     print_result_summary,
+    register_download_cleanup,
 )
 from scraper.core.engine import ScraperEngine
 from scraper.interaction import (
@@ -43,41 +41,50 @@ from scraper.interaction import (
     Key,
     WaitForAction,
 )
-from scraper.utils.logging import configure_logging
+from scraper.utils.logging import get_portal_logger
 from portals.config import PortalConfig, PortalRegistry
 
-registry = PortalRegistry.load()
-portal   = registry.get("carburos_metalicos")
-
 DOWNLOAD_DIR = Path("data") / "carburos_metalicos" / "downloads"
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
 LOG_DIR = Path("data") / "carburos_metalicos" / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-async def get_last_date(portal: PortalConfig) -> date:
-    async with portal.get_repository() as repo:
+async def get_last_date(portal: PortalConfig, connection_string: str) -> date:
+    async with portal.get_repository(connection_string) as repo:
         return await repo.get_last_date(
             table=portal.db_table or "Telemetria_Tanque_Co2",
             date_column="timestamp",
             schema=portal.db_schema or "dbo",
-            default_date=date(2024, 5, 1),
+            default_date=portal.db_default_start_date or date(2024, 5, 1),
         )
 
 
 async def run_flow() -> None:
-    configure_logging(log_dir=LOG_DIR, debug=False)
-    print("=" * 60)
-    print("  Carburos Metálicos (Air Products) - Telemetry Scraper")
-    print(f"  Portal: {portal.portal_url}")
-    print("=" * 60)
+    registry = PortalRegistry.load()
+    portal = registry.get("carburos_metalicos")
+
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    logger = get_portal_logger("carburos_metalicos", LOG_DIR, debug=False)
+
+    connection_string = os.getenv("SCRAPER_DB_CONNECTION_STRING")
+    if not connection_string:
+        raise RuntimeError(
+            "SCRAPER_DB_CONNECTION_STRING is not set in the environment."
+        )
 
     today = date.today()
-    start = today - timedelta(days=92)
+    start = await get_last_date(portal, connection_string)
 
-    print(f"  📅 Rang de dates a escrapejar: {start} -> {today}")
-    print("=" * 60)
+    logger.info(
+        "%s\n  Carburos Metálicos (Air Products) - Telemetry Scraper\n"
+        "  Portal: %s\n  📅 Rang de dates a escrapejar: %s -> %s\n%s",
+        "=" * 60,
+        portal.portal_url,
+        start,
+        today,
+        "=" * 60,
+    )
 
     session = (
         portal.get_builder()
@@ -85,39 +92,35 @@ async def run_flow() -> None:
         .with_interaction(
             FormInteractor(
                 actions=[
-                    # 1. Click Readings link to navigate to /Tanks/Readings/175738
                     ClickAction(
                         "a[href*='/Tanks/Readings/175738']",
                         wait_for_nav=True,
                     ),
 
-                    # 2. Wait for startDate datepicker input to be visible in DOM
                     WaitForAction("input[name='startDate']", timeout=30_000),
 
-                    # 3. Fill startDate (from database last_date or default in dd/mm/yyyy format)
+                    # start is the last stored date (or the portal's configured
+                    # fallback), formatted dd/mm/yy as this datepicker expects.
                     FillAction(
                         "input[name='startDate']",
                         f"{start.day}/{start.month}/{start.strftime('%y')}",
                         press_key=Key.ENTER,
                     ),
 
-                    # 4. Fill endDate (today in dd/mm/yyyy format)
                     FillAction(
                         "input[name='endDate']",
                         f"{today.day}/{today.month}/{today.strftime('%y')}",
                         press_key=Key.ENTER,
                     ),
 
-                    
                     ClickAction(
                         "button[type*='submit']",
                         wait_for_nav=False,
                     ),
 
-                    # 5. Wait for download link to appear after Angular updates readings
+                    # The download link only appears after Angular refreshes the readings list.
                     WaitForAction("a[ng-click*='getReadingsCsv']", timeout=30_000),
 
-                    # 6. Click download link to download CSV spreadsheet
                     DownloadSubmitAction(
                         selector="a[ng-click*='getReadingsCsv']",
                         download_dir=DOWNLOAD_DIR,
@@ -136,46 +139,19 @@ async def run_flow() -> None:
                 tz="Europe/Madrid",
             )
         )
-        .with_storage(portal.get_storage())
+        .with_storage(portal.get_storage(connection_string))
         .build()
     )
 
-    dispatcher = EventDispatcher()
-
-    @dispatcher.on("auth.success")
-    def on_auth(payload: dict[str, Any]) -> None:
-        print("  🔐 [Event: auth.success] Autenticació al portal completada amb èxit!")
-
-    @dispatcher.on("file.downloaded")
-    def on_download(payload: dict[str, Any]) -> None:
-        print(
-            f"  📥 [Event: file.downloaded] Fitxer descarregat: {payload['path']} ({payload['size_bytes']} bytes)"
-        )
-
-    @dispatcher.on("storage.saved")
-    def on_saved(payload: dict[str, Any]) -> None:
-        print(
-            f"  🚀 [Event: storage.saved] Desats/upsertats {payload['rows']} registres a SQL Server "
-            f"[{payload['schema']}].[{payload['table']}] (PK: {payload['upsert_key']})!"
-        )
-
-    @dispatcher.on("storage.skipped")
-    def on_skipped(payload: dict[str, Any]) -> None:
-        print(
-            f"  ⚠️ [Event: storage.skipped] Cap registre per desar a [{payload['schema']}].[{payload['table']}] "
-            f"(Motiu: {payload.get('reason')})"
-        )
-
-    @dispatcher.on("storage.error")
-    def on_error(payload: dict[str, Any]) -> None:
-        print(
-            f"  ❌ [Event: storage.error] Error desant a [{payload['schema']}].[{payload['table']}]: {payload['error']}"
-        )
+    dispatcher = create_default_dispatcher(logger)
+    register_download_cleanup(dispatcher, logger=logger)
 
     engine = ScraperEngine(session, dispatcher=dispatcher)
     result = await engine.run()
 
-    print_result_summary(result, title=f"{portal.name} - CSV Readings Export")
+    title = f"{portal.name} - CSV Readings Export"
+    print_result_summary(result, title=title)
+    logger.info(format_result_summary(result, title=title))
 
 
 if __name__ == "__main__":

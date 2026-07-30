@@ -26,13 +26,11 @@ from typing import Any
 
 from scraper.core.session import ScraperSession
 from scraper.events.dispatcher import EventDispatcher
+from scraper.middleware.rate_limiter import PerHostRateLimiter
 from scraper.utils.logging import configure_logging, get_logger
 from scraper.utils.url import normalise, same_domain
 
 logger = get_logger(__name__)
-
-
-# ── Result types ──────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -58,9 +56,6 @@ class ScrapeResult:
         return len(self.pages) + len(self.errors)
 
 
-# ── Engine ────────────────────────────────────────────────────────────────────
-
-
 class ScraperEngine:
     """Async engine that runs a :class:`~scraper.core.session.ScraperSession`.
 
@@ -79,8 +74,7 @@ class ScraperEngine:
         self._visited: set[str] = set()
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._result = ScrapeResult()
-
-    # ── Public API ────────────────────────────────────────────────────────
+        self._rate_limiter = PerHostRateLimiter(delay=session.context.rate_limit_delay)
 
     async def run(self) -> ScrapeResult:
         """Execute the scraping session and return aggregated results."""
@@ -100,19 +94,16 @@ class ScraperEngine:
                 if self._session.storage is not None:
                     await self._session.storage.open()
                 try:
-                    # ── 1. Authenticate ───────────────────────────────────────
                     if self._session.auth is not None:
                         logger.debug("🔐 Authenticating…")
                         await self._session.auth.authenticate(backend, ctx)
                         await self._dispatcher.emit("auth.success", {"context": ctx})
 
-                    # ── 2. Seed the queue ─────────────────────────────────────
                     for url in self._session.start_urls:
                         normalised = normalise(url)
                         self._visited.add(normalised)
                         await self._queue.put(normalised)
 
-                    # ── 3. Launch worker pool ─────────────────────────────────
                     workers = [
                         asyncio.create_task(self._worker(worker_id=i))
                         for i in range(ctx.max_concurrent)
@@ -139,14 +130,14 @@ class ScraperEngine:
         )
         return self._result
 
-    # ── Workers ───────────────────────────────────────────────────────────
-
     async def _worker(self, worker_id: int) -> None:
         """Consumer coroutine — processes URLs from the shared queue."""
         ctx = self._session.context
         while True:
             url = await self._queue.get()
             try:
+                if ctx.rate_limit_delay > 0:
+                    await self._rate_limiter.acquire(url)
                 logger.debug("[worker-%d] Fetching %s", worker_id, url)
                 await self._process_url(url)
             except asyncio.CancelledError:
@@ -160,31 +151,22 @@ class ScraperEngine:
             finally:
                 self._queue.task_done()
 
-            # Rate limiting — pause between requests
-            if ctx.rate_limit_delay > 0:
-                await asyncio.sleep(ctx.rate_limit_delay)
-
     async def _process_url(self, url: str) -> None:
         """Fetch one URL, run interactions, extract data, persist it, and enqueue new links."""
         session = self._session
         ctx = session.context
 
-        # ── Fetch (with or without page interactions) ──────────────────────
         has_interactors = bool(session.interactors)
-        supports_interactive = hasattr(session.backend, "get_interactive")
 
-        if has_interactors and supports_interactive:
-            get_interactive_fn = getattr(session.backend, "get_interactive")
-            response = await get_interactive_fn(url, session.interactors, ctx)
+        if has_interactors and session.backend.supports_interactive:
+            response = await session.backend.get_interactive(url, session.interactors, ctx)
         else:
             response = await session.backend.get(url)
 
         await self._dispatcher.emit("page.loaded", {"url": url, "status": response.status_code})
 
-        # ── Extract ────────────────────────────────────────────────────────
         merged_data: dict[str, Any] = {"_url": url, "_status": response.status_code}
 
-        # Surface any downloaded files from the interaction layer
         downloads = response.metadata.get("downloads", [])
         if downloads:
             merged_data["_downloads"] = downloads
@@ -207,11 +189,11 @@ class ScraperEngine:
         self._result.pages.append(page_result)
         await self._dispatcher.emit("data.extracted", {"url": url, "data": merged_data})
 
-        # ── Store ──────────────────────────────────────────────────────────
         if session.storage is not None and has_extracted_data:
-            table = getattr(session.storage, "_table", "unknown")
-            schema = getattr(session.storage, "_schema", "")
-            upsert_key = getattr(session.storage, "_upsert_key", None)
+            meta = session.storage.storage_meta
+            table = meta.table_name if meta is not None else "unknown"
+            schema = meta.schema if meta is not None else ""
+            upsert_key = meta.upsert_key if meta is not None else None
             try:
                 rows = merged_data.get("_rows")
                 if isinstance(rows, list):
@@ -281,7 +263,6 @@ class ScraperEngine:
                 logger.error("ScraperEngine: storage error for %s — %s", url, exc)
                 raise
 
-        # ── Discover next URLs ─────────────────────────────────────────────
         for navigator in session.navigators:
             next_urls = await navigator.discover(response, ctx)
             for next_url in next_urls:

@@ -66,7 +66,7 @@ def is_numeric_string_series(series: "pd.Series") -> bool:
 
 def convert_datetime_series_to_iso(
     series: "pd.Series",
-    tz: str | None = "Europe/Madrid",
+    tz: str | None = None,
 ) -> "pd.Series":
     """Parse a datetime Series and format it as an ISO 8601 string with timezone offset."""
     import pandas as pd
@@ -93,6 +93,65 @@ def convert_datetime_series_to_iso(
     if isinstance(res, pd.Series):
         return res
     return pd.Series(res, index=series.index)
+
+
+def read_tabular_rows(
+    df: "pd.DataFrame",
+    columns: list[str] | dict[str, str] | None = None,
+    clean_comma_decimals: bool = True,
+    exclude_clean_cols: list[str] | None = None,
+    tz: str | None = None,
+) -> list[dict[str, Any]]:
+    """Normalise a DataFrame into database-ready row dicts.
+
+    Shared by :func:`scraper.utils.csv.read_csv_rows` and
+    :func:`scraper.utils.excel.read_excel_rows`: renames columns, auto-detects
+    and converts datetime/numeric columns, and flattens NaN/NaT to ``None``.
+
+    Parameters:
+        df:                    Source DataFrame (already loaded from CSV/Excel).
+        columns:               Optional column mapping (sequential list or header dict).
+        clean_comma_decimals:  Whether to clean thousands dots and comma decimals.
+        exclude_clean_cols:    Column names to exempt from numeric conversion.
+        tz:                    Timezone name for timestamp localization/conversion,
+                               or ``None`` to leave timestamps timezone-naive.
+
+    Returns:
+        A list of dictionary records.
+    """
+    import math
+
+    import pandas as pd
+
+    if isinstance(columns, list):
+        num_cols = min(len(columns), len(df.columns))
+        rename_map = {df.columns[i]: columns[i] for i in range(num_cols)}
+        df = df.rename(columns=rename_map)
+    elif isinstance(columns, dict):
+        df = df.rename(columns=columns)
+
+    user_excludes = {col.lower() for col in (exclude_clean_cols or [])}
+
+    for col in df.columns:
+        if col.lower() in user_excludes:
+            continue
+
+        series = df[col]
+        if is_datetime_series(series):
+            df[col] = convert_datetime_series_to_iso(series, tz=tz)
+        elif clean_comma_decimals and is_numeric_string_series(series):
+            df[col] = clean_comma_decimal_series(series)
+
+    records: list[dict[str, Any]] = []
+    for row in df.to_dict(orient="records"):
+        clean_row: dict[str, Any] = {}
+        for k, v in row.items():
+            if v is None or pd.isna(v) or (isinstance(v, float) and math.isnan(v)):
+                clean_row[str(k)] = None
+            else:
+                clean_row[str(k)] = v
+        records.append(clean_row)
+    return records
 
 
 def clean_comma_decimal_series(series: "pd.Series") -> "pd.Series":

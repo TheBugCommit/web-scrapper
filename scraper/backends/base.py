@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -62,8 +63,6 @@ class AbstractBackend(ABC):
             response = await backend.get("https://example.com")
     """
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────
-
     async def __aenter__(self) -> "AbstractBackend":
         await self.open()
         return self
@@ -77,8 +76,6 @@ class AbstractBackend(ABC):
     async def close(self) -> None:
         """Release all resources."""
 
-    # ── HTTP primitives ───────────────────────────────────────────────────
-
     @abstractmethod
     async def get(self, url: str, **kwargs: object) -> PageResponse:
         """Perform an HTTP GET and return a :class:`PageResponse`."""
@@ -89,11 +86,27 @@ class AbstractBackend(ABC):
     ) -> PageResponse:
         """Perform an HTTP POST with form *data* and return a :class:`PageResponse`."""
 
-    # ── Cookie / session helpers ──────────────────────────────────────────
+    supports_interactive: bool = False
+    """Whether this backend can drive a live browser page (DOM interaction,
+    forms, downloads). Backends that implement :meth:`get_interactive`
+    override this to ``True`` instead of being duck-typed via ``hasattr``."""
 
-    def set_cookies(self, cookies: dict[str, str]) -> None:
+    async def get_interactive(
+        self, url: str, interactors: list[Any], context: Any = None
+    ) -> PageResponse:
+        """Navigate to *url* and let *interactors* drive the live page.
+
+        Only implemented by backends where :attr:`supports_interactive`
+        is ``True`` (e.g. :class:`~scraper.backends.playwright_backend.PlaywrightBackend`).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support interactive page control "
+            "(supports_interactive is False)."
+        )
+
+    async def set_cookies(self, cookies: dict[str, str]) -> None:
         """Inject cookies into the backend session."""
 
-    def get_cookies(self) -> dict[str, str]:
+    async def get_cookies(self) -> dict[str, str]:
         """Return all current session cookies."""
         return {}

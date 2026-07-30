@@ -3,6 +3,15 @@ portals.run
 ~~~~~~~~~~~
 CLI principal per executar un, diversos o tots els portals de scraping del projecte.
 
+Els portals disponibles es descobreixen automàticament des de ``portals.yml``
+(via ``PortalRegistry``) i s'importen per convenció com a ``portals.{key}.flow``
+— no cal mantenir cap llista duplicada de mòduls en aquest fitxer.
+
+Quan es demanen diversos portals, s'executen concurrentment (``asyncio.gather``).
+Cada portal registra la seva narrativa al seu propi logger (veure
+``scraper.utils.logging.get_portal_logger``, usat per cada ``flow.py``), així
+que l'execució concurrent no intercala missatges a la consola.
+
 Exemples d'ús:
     python portals/run.py --all
     python portals/run.py messer
@@ -16,20 +25,10 @@ import asyncio
 import importlib
 import logging
 import sys
-from pathlib import Path
-
-# Ensure project root is in sys.path so 'portals' and 'scraper' can be imported directly
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from portals.config import PortalRegistry
 
 logger = logging.getLogger("portals.run")
-
-# Portals registrats i els seus respectius mòduls de flow
-_PORTAL_FLOW_MODULES = {
-    "messer": "portals.messer.flow",
-    "carburos_metalicos": "portals.carburos_metalicos.flow",
-}
 
 
 async def run_portal(key: str) -> bool:
@@ -37,18 +36,24 @@ async def run_portal(key: str) -> bool:
 
     Retorna True si l'execució ha tingut èxit, False en cas d'error.
     """
-    module_name = _PORTAL_FLOW_MODULES.get(key)
-    if not module_name:
-        print(f"[ERROR] Portal desconegut: '{key}'. Portals disponibles: {list(_PORTAL_FLOW_MODULES.keys())}")
-        return False
+    module_name = f"portals.{key}.flow"
 
     print(f"\n>>> Iniciant execució del portal: [{key}]...")
     try:
         mod = importlib.import_module(module_name)
-        run_fn = getattr(mod, "run_flow", None)
-        if not run_fn or not asyncio.iscoroutinefunction(run_fn):
-            print(f"[ERROR] El mòdul {module_name} no defineix una funció asíncrona 'run_flow()'.")
-            return False
+    except ModuleNotFoundError as exc:
+        print(
+            f"[ERROR] No s'ha pogut importar el mòdul de flow per al portal '{key}' "
+            f"(s'esperava {module_name}): {exc}"
+        )
+        return False
+
+    run_fn = getattr(mod, "run_flow", None)
+    if not run_fn or not asyncio.iscoroutinefunction(run_fn):
+        print(f"[ERROR] El mòdul {module_name} no defineix una funció asíncrona 'run_flow()'.")
+        return False
+
+    try:
         await run_fn()
         return True
     except Exception as exc:
@@ -67,28 +72,33 @@ async def main() -> int:
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Executar tots els portals configurats de manera seqüencial",
+        help="Executar tots els portals configurats concurrentment",
     )
     args = parser.parse_args()
 
+    registry = PortalRegistry.load()
+    available = registry.keys()
+
     if not args.all and not args.portals:
         parser.print_help()
-        print(f"\n[WARN] Portals disponibles: {', '.join(_PORTAL_FLOW_MODULES.keys())}")
+        print(f"\n[WARN] Portals disponibles: {', '.join(available)}")
         return 1
 
-    target_portals = list(_PORTAL_FLOW_MODULES.keys()) if args.all else args.portals
+    target_portals = available if args.all else args.portals
 
-    registry = PortalRegistry.load()
-    success_count = 0
-    total = len(target_portals)
-
+    valid_keys = []
     for key in target_portals:
-        if key not in _PORTAL_FLOW_MODULES:
-            print(f"[ERROR] Portal '{key}' no està registrat a _PORTAL_FLOW_MODULES.")
+        if key not in available:
+            print(
+                f"[ERROR] Portal '{key}' no està registrat a portals.yml. "
+                f"Disponibles: {', '.join(available)}"
+            )
             continue
-        ok = await run_portal(key)
-        if ok:
-            success_count += 1
+        valid_keys.append(key)
+
+    total = len(target_portals)
+    results = await asyncio.gather(*(run_portal(key) for key in valid_keys))
+    success_count = sum(results)
 
     print("\n" + "═" * 60)
     print(f"  Resum d'execució: {success_count}/{total} portals completats amb èxit.")

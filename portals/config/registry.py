@@ -2,20 +2,17 @@
 portals.config.registry
 ~~~~~~~~~~~~~~~~~~~~~~~
 ``PortalRegistry`` — loads portal configs from ``portals.yml`` and merges
-credentials from ``.env.portals``.
+credentials from ``portals_credentials.yml``.
 
 Design
 ------
 - **portals.yml** (committed to git): portal structure, URLs, field selectors.
   No usernames or passwords.
-- **.env.portals** (gitignored): credentials only, one line per portal::
+- **portals_credentials.yml** (gitignored): credentials per portal::
 
-      MESSER_USERNAME=
-      MESSER_PASSWORD=
-
-  Env-var prefix is the portal key in upper-case.  The variables are also
-  read from the process environment, so they can be injected via CI/CD
-  secrets without a file on disk.
+      messer:
+        username: "..."
+        password: "..."
 
 - ``PortalRegistry.load()`` merges both sources into
   :class:`~portals.config.models.PortalConfig` instances.
@@ -25,16 +22,14 @@ Usage::
     registry = PortalRegistry.load()          # default paths
     portal   = registry.get("messer")
 
-    # Convenience factory builds FormAuthHandler from the config
     auth = portal.form_auth()
-
-    # Portal-specific extras (export URLs, module IDs…) live in portal.extra
     export_url = portal.extra["export_url"]
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -49,8 +44,8 @@ _DEFAULT_CREDENTIALS = "portals/config/portals_credentials.yml"
 _KNOWN_KEYS = frozenset({
     "name", "portal_url", "login_url",
     "username_field", "password_field",
-    "success_selector", "headless",
-    "db_table", "db_schema", "db_upsert_key",
+    "success_selector",
+    "db_table", "db_schema", "db_upsert_key", "db_default_start_date",
 })
 
 
@@ -62,8 +57,6 @@ class PortalRegistry:
 
     def __init__(self, portals: dict[str, PortalConfig]) -> None:
         self._portals = portals
-
-    # ── Class-level factory ────────────────────────────────────────────────────
 
     @classmethod
     def load(
@@ -85,7 +78,6 @@ class PortalRegistry:
         config_path      = Path(config_path)
         credentials_path = Path(credentials_path)
 
-        # ── Load YAML credentials (portals_credentials.yml) ───────────────────
         creds_yaml: dict[str, Any] = {}
         if not credentials_path.exists() and Path("portals_credentials.yml").exists():
             credentials_path = Path("portals_credentials.yml")
@@ -94,7 +86,6 @@ class PortalRegistry:
                 creds_yaml = yaml.safe_load(ch) or {}
             logger.debug("PortalRegistry: loaded credentials YAML from %s", credentials_path)
 
-        # ── Load YAML config ──────────────────────────────────────────────────
         if not config_path.exists() and Path("portals.yml").exists():
             config_path = Path("portals.yml")
         if not config_path.exists():
@@ -112,7 +103,6 @@ class PortalRegistry:
                 f"{config_path} must have a top-level 'portals:' key."
             )
 
-        # ── Build PortalConfig objects ────────────────────────────────────────
         portals: dict[str, PortalConfig] = {}
         for key, cfg in raw["portals"].items():
             if not isinstance(cfg, dict):
@@ -132,9 +122,12 @@ class PortalRegistry:
                     key, credentials_path,
                 )
 
-            # Split known fields from free-form extras
             known  = {k: v for k, v in cfg.items() if k in _KNOWN_KEYS}
             extras = {k: v for k, v in cfg.items() if k not in _KNOWN_KEYS}
+
+            raw_start_date = known.get("db_default_start_date")
+            if isinstance(raw_start_date, str):
+                known["db_default_start_date"] = date.fromisoformat(raw_start_date)
 
             # Merge any extra keys defined in portals_credentials.yml into extras
             for k, v in portal_creds.items():
@@ -152,8 +145,6 @@ class PortalRegistry:
 
         logger.info("PortalRegistry: loaded %d portal(s): %s", len(portals), list(portals))
         return cls(portals)
-
-    # ── Instance methods ───────────────────────────────────────────────────────
 
     def get(self, key: str) -> PortalConfig:
         """Return the :class:`~portals.config.models.PortalConfig` for *key*.

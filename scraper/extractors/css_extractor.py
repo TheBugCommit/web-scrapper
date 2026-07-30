@@ -53,7 +53,6 @@ class CSSRule:
     transform: Any = None  # Callable[[str], Any]
 
 
-# A rule can be specified as a plain selector string or a CSSRule dataclass.
 RuleSpec = Union[str, CSSRule]
 
 

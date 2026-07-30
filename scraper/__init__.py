@@ -2,6 +2,8 @@ from scraper.core.builder import ScraperBuilder
 from scraper.core.context import ScraperContext
 from scraper.core.engine import PageResult, ScrapeResult, ScraperEngine
 from scraper.core.session import ScraperSession
+from scraper.events.cleanup import register_download_cleanup
+from scraper.events.default_handlers import create_default_dispatcher
 from scraper.events.dispatcher import EventDispatcher
 from scraper.extractors.csv_extractor import CSVExtractor
 from scraper.extractors.excel_extractor import ExcelExtractor
@@ -32,11 +34,13 @@ __all__ = [
     "ScraperContext",
     "ScraperEngine",
     "ScraperSession",
+    "create_default_dispatcher",
     "format_result_summary",
     "get_portal_last_date",
     "print_result_summary",
     "read_csv_rows",
     "read_excel_rows",
+    "register_download_cleanup",
 ]
 
 __version__ = "0.2.0"

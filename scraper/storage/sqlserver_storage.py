@@ -1,7 +1,7 @@
 """
 scraper.storage.sqlserver_storage
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-SQL Server storage sink powered by SQLAlchemy (async + pyodbc).
+SQL Server storage sink powered by SQLAlchemy (sync + pyodbc via thread pool).
 
 Features
 --------
@@ -11,8 +11,6 @@ Features
   on a primary key column.
 - **Async execution**: all DB I/O runs in a thread-pool executor so it does
   not block the asyncio event loop.
-- **Environment-driven config**: call :meth:`from_env` to read all settings
-  from environment variables / ``.env`` file.
 
 Connection string format (``SCRAPER_DB_CONNECTION_STRING``)::
 
@@ -29,11 +27,11 @@ import urllib.parse
 from functools import partial
 from typing import Any
 
-import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from scraper.storage.base import AbstractStorage
+from scraper.storage.base import AbstractStorage, StorageMeta
+from scraper.storage.engine_factory import create_sqlserver_engine
 from scraper.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -52,9 +50,15 @@ _DEFAULT_COL_TYPE = "NVARCHAR(MAX)"
 
 
 def normalise_sqlserver_connection_string(
-    conn_str: str, default_db: str = "Reporting_Test"
+    conn_str: str, default_db: str = ""
 ) -> str:
-    """Convert any SQL Server connection string (SSMS, ADO.NET, or SQLAlchemy URL) into a bulletproof odbc_connect URL."""
+    """Convert any SQL Server connection string (SSMS, ADO.NET, or SQLAlchemy URL)
+    into a bulletproof ``mssql+pyodbc:///?odbc_connect=...`` URL.
+
+    Parameters:
+        conn_str:   Connection string in any supported format.
+        default_db: Database name used if none can be inferred (default: ``""``).
+    """
     if "://" in conn_str and not conn_str.startswith("mssql"):
         return conn_str
 
@@ -129,8 +133,9 @@ def normalise_sqlserver_connection_string(
     odbc_parts = [
         f"DRIVER={{{driver}}}",
         f"SERVER={server}",
-        f"DATABASE={database}",
     ]
+    if database:
+        odbc_parts.append(f"DATABASE={database}")
     if user and password:
         odbc_parts.append(f"UID={user}")
         odbc_parts.append(f"PWD={password}")
@@ -143,7 +148,6 @@ def normalise_sqlserver_connection_string(
     odbc_str = ";".join(odbc_parts) + ";"
     encoded = urllib.parse.quote_plus(odbc_str)
     return f"mssql+pyodbc:///?odbc_connect={encoded}"
-
 
 
 class SQLServerStorage(AbstractStorage):
@@ -178,40 +182,36 @@ class SQLServerStorage(AbstractStorage):
         self._extra_columns = extra_columns or {}
         self._engine: Engine | None = None
         self._table_created = False
-        self._loop = asyncio.get_event_loop
 
-    # ── Factory ───────────────────────────────────────────────────────────
-
-    # ── Lifecycle ─────────────────────────────────────────────────────────
+    @property
+    def storage_meta(self) -> StorageMeta:
+        """Expose table/schema/key info via the public AbstractStorage API."""
+        schema, tname, _ = self._resolved_table()
+        return StorageMeta(
+            table_name=tname,
+            schema=schema,
+            upsert_key=self._upsert_key,
+        )
 
     async def open(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._engine = await loop.run_in_executor(
             None,
-            partial(
-                sa.create_engine,
-                self._conn_str,
-                pool_pre_ping=True,
-                pool_size=5,
-                max_overflow=10,
-                echo=False,
-            ),
+            partial(create_sqlserver_engine, self._conn_str),
         )
         logger.debug("SQLServerStorage: engine connected to %s", self._table)
 
     async def close(self) -> None:
         if self._engine is not None:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._engine.dispose)
             self._engine = None
         logger.debug("SQLServerStorage: engine disposed")
 
-    # ── Public API ────────────────────────────────────────────────────────
-
     async def save(self, data: dict[str, Any]) -> None:
         """Insert (or upsert) a single row into the target table."""
         row = {**self._extra_columns, **data}
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, partial(self._sync_save, row))
 
     async def save_many(self, rows: list[dict[str, Any]]) -> None:
@@ -219,10 +219,8 @@ class SQLServerStorage(AbstractStorage):
         if not rows:
             return
         prepared = [{**self._extra_columns, **r} for r in rows]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, partial(self._sync_save_many, prepared))
-
-    # ── Synchronous helpers (run in thread pool) ──────────────────────────
 
     def _engine_or_raise(self) -> Engine:
         if self._engine is None:
@@ -232,17 +230,21 @@ class SQLServerStorage(AbstractStorage):
             )
         return self._engine
 
+    def _resolved_table(self) -> tuple[str, str, str]:
+        """Return (schema, table_name, full_bracketed_table) from self._table and self._schema."""
+        parts = self._table.split(".")
+        schema = parts[0] if len(parts) > 1 else self._schema
+        tname = parts[-1]
+        full_table = f"[{schema}].[{tname}]"
+        return schema, tname, full_table
+
     def _ensure_table(self, conn: Any, row: dict[str, Any]) -> None:
         """Create the table if it does not exist, based on the row schema."""
         if self._table_created:
             return
 
-        # Parse schema + table name
-        parts = self._table.split(".")
-        schema = parts[0] if len(parts) > 1 else self._schema
-        tname = parts[-1]
+        schema, tname, full_table = self._resolved_table()
 
-        # Check existence
         check_sql = text(
             "SELECT 1 FROM INFORMATION_SCHEMA.TABLES "
             "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table"
@@ -252,14 +254,12 @@ class SQLServerStorage(AbstractStorage):
             self._table_created = True
             return
 
-        # Build CREATE TABLE
         col_defs = ["[_id] BIGINT IDENTITY(1,1) PRIMARY KEY"]
         for col, val in row.items():
             sql_type = _TYPE_MAP.get(type(val), _DEFAULT_COL_TYPE)
             safe_col = col.replace("]", "]]")
             col_defs.append(f"[{safe_col}] {sql_type} NULL")
 
-        full_table = f"[{schema}].[{tname}]"
         ddl = f"CREATE TABLE {full_table} ({', '.join(col_defs)})"
         logger.info("SQLServerStorage: creating table %s", full_table)
         conn.execute(text(ddl))
@@ -267,7 +267,7 @@ class SQLServerStorage(AbstractStorage):
         self._table_created = True
 
     def _serialise_row(self, row: dict[str, Any]) -> dict[str, Any]:
-        """Convert complex types to JSON strings and normalize timestamps for SQL Server DATETIMEOFFSET compatibility."""
+        """Convert complex types to JSON strings and normalize timestamps for DATETIMEOFFSET."""
         result: dict[str, Any] = {}
         for k, v in row.items():
             if isinstance(v, (list, dict)):
@@ -283,14 +283,10 @@ class SQLServerStorage(AbstractStorage):
     def _sync_save(self, row: dict[str, Any]) -> None:
         row = self._serialise_row(row)
         engine = self._engine_or_raise()
-        parts = self._table.split(".")
-        schema = parts[0] if len(parts) > 1 else self._schema
-        tname = parts[-1]
-        full_table = f"[{schema}].[{tname}]"
+        _, _, full_table = self._resolved_table()
 
         with engine.begin() as conn:
             self._ensure_table(conn, row)
-
             if self._has_upsert_key(row):
                 self._merge(conn, full_table, row)
             else:
@@ -301,10 +297,7 @@ class SQLServerStorage(AbstractStorage):
             return
         rows = [self._serialise_row(r) for r in rows]
         engine = self._engine_or_raise()
-        parts = self._table.split(".")
-        schema = parts[0] if len(parts) > 1 else self._schema
-        tname = parts[-1]
-        full_table = f"[{schema}].[{tname}]"
+        _, _, full_table = self._resolved_table()
 
         with engine.begin() as conn:
             self._ensure_table(conn, rows[0])
@@ -335,7 +328,6 @@ class SQLServerStorage(AbstractStorage):
         on_clause = " AND ".join(f"target.[{k}] = source.[{k}]" for k in keys)
 
         if not other_cols:
-            # Only key column(s) — just insert if not exists
             where_clause = " AND ".join(f"[{k}] = :{k}" for k in keys)
             sql = text(
                 f"IF NOT EXISTS (SELECT 1 FROM {full_table} WHERE {where_clause}) "

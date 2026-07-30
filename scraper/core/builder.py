@@ -25,7 +25,10 @@ Usage example::
         .with_backend(PlaywrightBackend())
         .with_navigator(PaginationNavigator(next_selector="a.next"))
         .with_extractor(CSSExtractor(rules={"title": "h1", "price": ".price"}))
-        .with_storage(SQLServerStorage.from_env())
+        .with_storage(SQLServerStorage(
+            connection_string=os.environ["SCRAPER_DB_CONNECTION_STRING"],
+            table="scraped_data",
+        ))
         .build()
     )
 """
@@ -64,7 +67,6 @@ class ScraperBuilder:
         self._storage: "AbstractStorage | None" = None
         self._start_urls: list[str] = []
 
-        # Default context configuration options
         self._max_depth: int = 5
         self._max_concurrent: int = 5
         self._debug_mode: bool = False
@@ -72,8 +74,6 @@ class ScraperBuilder:
         self._max_retries: int = 3
         self._download_dir: Path = Path("./downloads")
         self._headless: bool = True
-
-    # ── Context / URL ──────────────────────────────────────────────────────
 
     def with_url(self, url: str) -> "ScraperBuilder":
         """Set the base / seed URL for the session."""
@@ -125,21 +125,15 @@ class ScraperBuilder:
         self._headless = headless
         return self
 
-    # ── Backend ────────────────────────────────────────────────────────────
-
     def with_backend(self, backend: "AbstractBackend") -> "ScraperBuilder":
         """Choose the HTTP/browser backend (e.g. RequestsBackend or PlaywrightBackend)."""
         self._backend = backend
         return self
 
-    # ── Auth ───────────────────────────────────────────────────────────────
-
     def with_auth(self, handler: "AbstractAuthHandler") -> "ScraperBuilder":
         """Attach an authentication handler executed once before scraping."""
         self._auth = handler
         return self
-
-    # ── Interaction ────────────────────────────────────────────────────────
 
     def with_interaction(self, interactor: "AbstractPageInteractor") -> "ScraperBuilder":
         """Append a page interactor run between fetch and extraction.
@@ -160,28 +154,20 @@ class ScraperBuilder:
         self._interactors.extend(interactors)
         return self
 
-    # ── Navigation ─────────────────────────────────────────────────────────
-
     def with_navigator(self, navigator: "AbstractNavigator") -> "ScraperBuilder":
         """Append a navigator (link follower, paginator, etc.)."""
         self._navigators.append(navigator)
         return self
-
-    # ── Extractors ─────────────────────────────────────────────────────────
 
     def with_extractor(self, extractor: "AbstractExtractor") -> "ScraperBuilder":
         """Append a data extractor applied to every fetched page."""
         self._extractors.append(extractor)
         return self
 
-    # ── Storage ────────────────────────────────────────────────────────────
-
     def with_storage(self, storage: "AbstractStorage") -> "ScraperBuilder":
         """Set the storage sink where extracted rows are persisted."""
         self._storage = storage
         return self
-
-    # ── Build ──────────────────────────────────────────────────────────────
 
     def build(self) -> ScraperSession:
         """Validate configuration and return a :class:`ScraperSession`.
@@ -194,8 +180,7 @@ class ScraperBuilder:
                 "A backend is required. Call .with_backend() before .build()."
             )
 
-        # Warn if interactors are registered with a non-interactive backend
-        if self._interactors and not hasattr(self._backend, "get_interactive"):
+        if self._interactors and not self._backend.supports_interactive:
             import logging
             logging.getLogger(__name__).warning(
                 "ScraperBuilder: interactors registered but backend %s does not "
@@ -204,7 +189,6 @@ class ScraperBuilder:
                 type(self._backend).__name__,
             )
 
-        # Build a default context if the caller did not supply one explicitly.
         if self._context is None:
             base = self._start_urls[0] if self._start_urls else ""
             self._context = ScraperContext(

@@ -15,11 +15,11 @@ from datetime import date, datetime
 from functools import partial
 from typing import Any, TYPE_CHECKING
 
-import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from scraper.storage.criteria import Criteria, compile_criteria_to_sqlserver
+from scraper.storage.engine_factory import create_sqlserver_engine
 from scraper.storage.sqlserver_storage import normalise_sqlserver_connection_string
 from scraper.utils.logging import get_logger
 
@@ -35,13 +35,12 @@ logger = get_logger(__name__)
 class SQLServerRepository:
     """Async repository for querying SQL Server tables via the Criteria pattern.
 
-    Construct instances using one of the factory class-methods:
-    - :meth:`from_env`: read connection string from ``SCRAPER_DB_CONNECTION_STRING``
-    - :meth:`from_portal`: derive schema from a PortalConfig object
+    Construct directly with a connection string, or via :meth:`from_portal`
+    to derive the schema from a portal config object.
 
     Example usage::
 
-        async with SQLServerRepository.from_env() as repo:
+        async with SQLServerRepository(connection_string=conn_str) as repo:
             last_date = await repo.get_last_date(
                 table="Telemetria_Tanque_N",
                 date_column="timestamp",
@@ -64,28 +63,19 @@ class SQLServerRepository:
             raise ValueError("connection_string is required to instantiate SQLServerRepository.")
         return cls(connection_string=connection_string, default_schema=schema)
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────
-
     async def open(self) -> None:
         """Connect the underlying SQLAlchemy engine pool."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._engine = await loop.run_in_executor(
             None,
-            partial(
-                sa.create_engine,
-                self._conn_str,
-                pool_pre_ping=True,
-                pool_size=5,
-                max_overflow=10,
-                echo=False,
-            ),
+            partial(create_sqlserver_engine, self._conn_str),
         )
         logger.debug("SQLServerRepository: engine opened")
 
     async def close(self) -> None:
         """Dispose the engine pool."""
         if self._engine is not None:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._engine.dispose)
             self._engine = None
             logger.debug("SQLServerRepository: engine disposed")
@@ -105,8 +95,6 @@ class SQLServerRepository:
             )
         return self._engine
 
-    # ── Criteria Execution ────────────────────────────────────────────────
-
     def _sync_execute_criteria(self, criteria: Criteria) -> list[dict[str, Any]]:
         engine = self._engine_or_raise()
         sql_str, params = compile_criteria_to_sqlserver(criteria)
@@ -119,15 +107,13 @@ class SQLServerRepository:
 
     async def find(self, criteria: Criteria) -> list[dict[str, Any]]:
         """Execute a Criteria specification and return a list of matching row dicts."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, partial(self._sync_execute_criteria, criteria))
 
     async def find_one(self, criteria: Criteria) -> dict[str, Any] | None:
         """Execute a Criteria specification and return the first matching row, or None."""
         rows = await self.find(criteria)
         return rows[0] if rows else None
-
-    # ── High-Level Domain Helpers ─────────────────────────────────────────
 
     async def table_exists(self, table: str, schema: str = "dbo") -> bool:
         """Check if a table exists in the SQL Server database using the Criteria pattern."""
@@ -211,7 +197,6 @@ async def get_portal_last_date(
 ) -> date:
     """Helper that queries the last scraped date for a portal outside the scraper engine.
 
-    Uses the Criteria Pattern via SQLServerRepository.
     If the portal's target table does not exist or is empty, returns ``default_date``
     (01/05/2024 by default).
     """

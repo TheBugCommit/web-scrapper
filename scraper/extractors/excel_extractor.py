@@ -13,7 +13,7 @@ Usage in ScraperBuilder::
         .with_extractor(
             ExcelExtractor(columns=["timestamp", "nivel_tanque_pct", "presion_bar"])
         )
-        .with_storage(portal.get_storage())
+        .with_storage(portal.get_storage(connection_string))
         .build()
     )
 """
@@ -40,6 +40,9 @@ class ExcelExtractor(AbstractExtractor):
         columns:              Optional column mapping (sequential list or header dict).
         clean_comma_decimals: Replace Spanish/German comma decimals (e.g. ``"70,0"`` -> ``70.0``).
         exclude_clean_cols:   Column names to exempt from numeric conversion (e.g. timestamps).
+        tz:                   Timezone name for timestamp localization/conversion
+                              (e.g. ``"Europe/Madrid"``), or ``None`` (default) to leave
+                              timestamps timezone-naive.
     """
 
     def __init__(
@@ -47,10 +50,12 @@ class ExcelExtractor(AbstractExtractor):
         columns: list[str] | dict[str, str] | None = None,
         clean_comma_decimals: bool = True,
         exclude_clean_cols: list[str] | None = None,
+        tz: str | None = None,
     ) -> None:
         self.columns = columns
         self.clean_comma_decimals = clean_comma_decimals
         self.exclude_clean_cols = exclude_clean_cols
+        self.tz = tz
 
     async def extract(self, page: "PageResponse") -> dict[str, Any]:
         """Extract table rows from any Excel file in ``page.metadata["downloads"]``."""
@@ -67,6 +72,7 @@ class ExcelExtractor(AbstractExtractor):
             columns=self.columns,
             clean_comma_decimals=self.clean_comma_decimals,
             exclude_clean_cols=self.exclude_clean_cols,
+            tz=self.tz,
         )
         logger.info("ExcelExtractor: extracted %d clean records", len(rows))
 

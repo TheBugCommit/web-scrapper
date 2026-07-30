@@ -5,10 +5,15 @@ Declarative Criteria Pattern implementation for building dynamic database querie
 without writing hardcoded SQL statements.
 
 Supports filtering, ordering, limiting, and aggregations (e.g. MAX, MIN, COUNT).
+
+Design: all fluent methods return a *new* Criteria instance (copy-on-write) so
+that the same base criteria can be reused safely in multiple branches without
+unintended side-effects.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -76,6 +81,9 @@ class AggregateProjection:
 class Criteria:
     """Declarative specification for a dynamic SQL query.
 
+    All fluent builder methods return a **new** ``Criteria`` instance (copy-on-write)
+    so the same base object can be reused in multiple branches safely.
+
     Example usage::
 
         # Build a query to get the maximum timestamp from Telemetria_Tanque_N
@@ -84,13 +92,10 @@ class Criteria:
             .select_max("timestamp", alias="last_val")
         )
 
-        # Build a filtered query
-        criteria = (
-            Criteria.for_table("Telemetria_Tanque_N")
-            .where("nivel_tanque_pct", ">", 50.0)
-            .order_by_desc("timestamp")
-            .take(10)
-        )
+        # Reuse a base criteria safely in two branches
+        base = Criteria.for_table("Telemetria_Tanque_N")
+        max_q = base.select_max("timestamp")
+        count_q = base.select_count()   # base is unchanged
     """
     table: str
     schema: str = "dbo"
@@ -100,6 +105,15 @@ class Criteria:
     offset: int | None = None
     select_fields: list[str] = field(default_factory=list)
     aggregate: AggregateProjection | None = None
+
+    def _copy(self) -> "Criteria":
+        """Return a shallow copy with independent list fields (copy-on-write)."""
+        return dataclasses.replace(
+            self,
+            filters=list(self.filters),
+            order_by=list(self.order_by),
+            select_fields=list(self.select_fields),
+        )
 
     @classmethod
     def for_table(cls, table: str, schema: str = "dbo") -> "Criteria":
@@ -112,51 +126,60 @@ class Criteria:
         op: str | FilterOperator = FilterOperator.EQ,
         value: Any = None,
     ) -> "Criteria":
-        """Add a filter condition to the WHERE clause."""
+        """Add a filter condition to the WHERE clause (returns a new Criteria)."""
         if isinstance(op, str):
             op = FilterOperator(op)
-        self.filters.append(FilterCondition(field_name, op, value))
-        return self
+        new = self._copy()
+        new.filters.append(FilterCondition(field_name, op, value))
+        return new
 
     def order_by_asc(self, field_name: str) -> "Criteria":
-        """Add an ascending ORDER BY clause."""
-        self.order_by.append(OrderCondition(field_name, OrderDirection.ASC))
-        return self
+        """Add an ascending ORDER BY clause (returns a new Criteria)."""
+        new = self._copy()
+        new.order_by.append(OrderCondition(field_name, OrderDirection.ASC))
+        return new
 
     def order_by_desc(self, field_name: str) -> "Criteria":
-        """Add a descending ORDER BY clause."""
-        self.order_by.append(OrderCondition(field_name, OrderDirection.DESC))
-        return self
+        """Add a descending ORDER BY clause (returns a new Criteria)."""
+        new = self._copy()
+        new.order_by.append(OrderCondition(field_name, OrderDirection.DESC))
+        return new
 
     def take(self, limit: int) -> "Criteria":
-        """Set the maximum number of rows to return (LIMIT / TOP)."""
-        self.limit = limit
-        return self
+        """Set the maximum number of rows to return (LIMIT / TOP, returns a new Criteria)."""
+        new = self._copy()
+        new.limit = limit
+        return new
 
     def skip(self, offset: int) -> "Criteria":
-        """Set the number of rows to skip (OFFSET)."""
-        self.offset = offset
-        return self
+        """Set the number of rows to skip (OFFSET, returns a new Criteria)."""
+        new = self._copy()
+        new.offset = offset
+        return new
 
     def select(self, *field_names: str) -> "Criteria":
-        """Specify which columns to select."""
-        self.select_fields.extend(field_names)
-        return self
+        """Specify which columns to select (returns a new Criteria)."""
+        new = self._copy()
+        new.select_fields.extend(field_names)
+        return new
 
     def select_max(self, field_name: str, alias: str = "max_val") -> "Criteria":
-        """Specify a MAX() aggregation projection."""
-        self.aggregate = AggregateProjection(AggregateFunction.MAX, field_name, alias)
-        return self
+        """Specify a MAX() aggregation projection (returns a new Criteria)."""
+        new = self._copy()
+        new.aggregate = AggregateProjection(AggregateFunction.MAX, field_name, alias)
+        return new
 
     def select_min(self, field_name: str, alias: str = "min_val") -> "Criteria":
-        """Specify a MIN() aggregation projection."""
-        self.aggregate = AggregateProjection(AggregateFunction.MIN, field_name, alias)
-        return self
+        """Specify a MIN() aggregation projection (returns a new Criteria)."""
+        new = self._copy()
+        new.aggregate = AggregateProjection(AggregateFunction.MIN, field_name, alias)
+        return new
 
     def select_count(self, field_name: str = "*", alias: str = "cnt") -> "Criteria":
-        """Specify a COUNT() aggregation projection."""
-        self.aggregate = AggregateProjection(AggregateFunction.COUNT, field_name, alias)
-        return self
+        """Specify a COUNT() aggregation projection (returns a new Criteria)."""
+        new = self._copy()
+        new.aggregate = AggregateProjection(AggregateFunction.COUNT, field_name, alias)
+        return new
 
 
 def compile_criteria_to_sqlserver(
@@ -170,13 +193,9 @@ def compile_criteria_to_sqlserver(
     params: dict[str, Any] = {}
     full_table = f"[{criteria.schema}].[{criteria.table}]"
 
-    # 1. SELECT clause
     if criteria.aggregate:
         agg = criteria.aggregate
-        if agg.field == "*":
-            field_expr = "*"
-        else:
-            field_expr = f"[{agg.field}]"
+        field_expr = "*" if agg.field == "*" else f"[{agg.field}]"
         select_clause = f"{agg.function.value}({field_expr}) AS [{agg.output_alias}]"
     elif criteria.select_fields:
         select_clause = ", ".join(f"[{f}]" for f in criteria.select_fields)
@@ -188,7 +207,6 @@ def compile_criteria_to_sqlserver(
     if criteria.limit is not None and criteria.offset is None:
         top_clause = f"TOP ({criteria.limit}) "
 
-    # 2. WHERE clause
     where_parts: list[str] = []
     for i, filter_cond in enumerate(criteria.filters):
         param_name = f"p_{i}"
@@ -209,17 +227,15 @@ def compile_criteria_to_sqlserver(
 
     where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
-    # 3. ORDER BY clause
     order_clause = ""
     if criteria.order_by:
         orders = [f"[{o.field}] {o.direction.value}" for o in criteria.order_by]
         order_clause = f" ORDER BY {', '.join(orders)}"
     elif criteria.offset is not None:
-        # SQL Server OFFSET requires an ORDER BY clause; default to first selected field or (SELECT NULL)
+        # SQL Server OFFSET requires an ORDER BY clause
         default_order = f"[{criteria.select_fields[0]}]" if criteria.select_fields else "(SELECT NULL)"
         order_clause = f" ORDER BY {default_order}"
 
-    # 4. OFFSET / FETCH clause (for pagination)
     paging_clause = ""
     if criteria.offset is not None:
         paging_clause = f" OFFSET {criteria.offset} ROWS"

@@ -68,7 +68,6 @@ def _read_csv_df(path: Path) -> "pd.DataFrame":
         except Exception:
             continue
 
-    # Default fallback
     return pd.read_csv(path, encoding=encoding)
 
 
@@ -77,7 +76,7 @@ def read_csv_rows(
     columns: list[str] | dict[str, str] | None = None,
     clean_comma_decimals: bool = True,
     exclude_clean_cols: list[str] | None = None,
-    tz: str | None = "Europe/Madrid",
+    tz: str | None = None,
 ) -> list[dict[str, Any]]:
     """Read a CSV file and return a list of row dicts.
 
@@ -90,13 +89,16 @@ def read_csv_rows(
         columns:              Optional column mapping (list by position or dict by header name).
         clean_comma_decimals: Whether to clean thousands dots and comma decimals.
         exclude_clean_cols:   Column names to exempt from numeric conversion.
-        tz:                   Timezone name for timestamp localization/conversion (default ``"Europe/Madrid"``).
+        tz:                   Timezone name for timestamp localization/conversion, or
+                               ``None`` (default) to leave timestamps timezone-naive.
+                               Callers that need a specific timezone (e.g. ``"Europe/Madrid"``)
+                               must pass it explicitly.
 
     Returns:
         A list of dictionary records ready for SQLServerStorage.save_many().
     """
     try:
-        import pandas as pd
+        import pandas  # noqa: F401
     except ImportError as exc:
         raise ImportError(
             "pandas is required for read_csv_rows(). Install it with: pip install pandas"
@@ -108,43 +110,12 @@ def read_csv_rows(
 
     df = _read_csv_df(path)
 
-    # 1. Map columns if requested
-    if isinstance(columns, list):
-        num_cols = min(len(columns), len(df.columns))
-        rename_map = {df.columns[i]: columns[i] for i in range(num_cols)}
-        df = df.rename(columns=rename_map)
-    elif isinstance(columns, dict):
-        df = df.rename(columns=columns)
+    from scraper.utils.converters import read_tabular_rows
 
-    user_excludes = {col.lower() for col in (exclude_clean_cols or [])}
-
-    # 2. Automatically detect and convert column types (dates/timestamps vs numeric strings)
-    from scraper.utils.converters import (
-        clean_comma_decimal_series,
-        convert_datetime_series_to_iso,
-        is_datetime_series,
-        is_numeric_string_series,
+    return read_tabular_rows(
+        df,
+        columns=columns,
+        clean_comma_decimals=clean_comma_decimals,
+        exclude_clean_cols=exclude_clean_cols,
+        tz=tz,
     )
-
-    for col in df.columns:
-        if col.lower() in user_excludes:
-            continue
-
-        series = df[col]
-        if is_datetime_series(series):
-            df[col] = convert_datetime_series_to_iso(series, tz=tz)
-        elif clean_comma_decimals and is_numeric_string_series(series):
-            df[col] = clean_comma_decimal_series(series)
-
-    import math
-
-    records: list[dict[str, Any]] = []
-    for row in df.to_dict(orient="records"):
-        clean_row: dict[str, Any] = {}
-        for k, v in row.items():
-            if v is None or pd.isna(v) or (isinstance(v, float) and math.isnan(v)):
-                clean_row[str(k)] = None
-            else:
-                clean_row[str(k)] = v
-        records.append(clean_row)
-    return records

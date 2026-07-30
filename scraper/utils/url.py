@@ -50,10 +50,13 @@ def is_navigable(url: str) -> bool:
     return scheme in ("http", "https")
 
 
-def extract_links(html: str, base_url: str) -> list[str]:
-    """Extract and normalise all ``<a href>`` links from *html*.
+def extract_links(html: str, base_url: str, selector: str = "a[href]") -> list[str]:
+    """Extract and normalise all href-bearing links from *html* matching *selector*.
 
-    Returns a de-duplicated list of absolute URLs, skipping non-http schemes.
+    Returns a de-duplicated list of absolute URLs, skipping non-http(s) schemes
+    and empty/fragment-only hrefs. Shared by navigators, the debug crawler, and
+    the file downloader so link-collection logic lives in exactly one place;
+    callers apply their own same-origin/same-domain/pattern filters on top.
     """
     from bs4 import BeautifulSoup  # local import to avoid circular deps
 
@@ -61,8 +64,9 @@ def extract_links(html: str, base_url: str) -> list[str]:
     seen: set[str] = set()
     links: list[str] = []
 
-    for tag in soup.find_all("a", href=True):
-        href: str = tag["href"].strip()
+    for tag in soup.select(selector):
+        raw_href = tag.get("href", "")
+        href = raw_href[0] if isinstance(raw_href, list) else str(raw_href).strip()
         if not href or href.startswith("#"):
             continue
         abs_url = normalise(href, base=base_url)

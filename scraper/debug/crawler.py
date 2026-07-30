@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING
 from bs4 import BeautifulSoup
 
 from scraper.utils.logging import get_logger
-from scraper.utils.url import is_navigable, normalise, same_origin
+from scraper.utils.url import extract_links, normalise, same_origin
 
 if TYPE_CHECKING:
     from scraper.backends.base import AbstractBackend
@@ -93,7 +93,12 @@ class DebugCrawler:
         start_url:      Seed URL to begin crawling from.
         max_depth:      Maximum link-follow depth (0 = seed page only).
         max_concurrent: Maximum simultaneous page fetches.
-        same_origin_only: Only follow links sharing the seed host (default: True).
+        same_origin_only: Only follow links sharing the seed's exact scheme+host
+                          (default: True). Deliberately stricter than
+                          :class:`~scraper.navigation.link_navigator.LinkNavigator`'s
+                          same-domain default — the debug crawler is for precise
+                          site-mapping, where subdomains should show up as
+                          distinct nodes rather than being silently followed.
         link_selector:  CSS selector for links to follow (default: ``"a[href]"``).
     """
 
@@ -113,8 +118,6 @@ class DebugCrawler:
         self._same_origin_only = same_origin_only
         self._link_selector = link_selector
         self._visited: set[str] = set()
-
-    # ── Public API ────────────────────────────────────────────────────────
 
     async def crawl(self) -> CrawlNode:
         """Run BFS and return the root :class:`CrawlNode`.
@@ -158,8 +161,6 @@ class DebugCrawler:
             queue.extend(n.children)
         return result
 
-    # ── Internal ──────────────────────────────────────────────────────────
-
     async def _crawl_node(self, url: str, depth: int) -> CrawlNode:
         """Fetch *url* and recursively crawl its children up to max_depth."""
         self._visited.add(url)
@@ -179,7 +180,6 @@ class DebugCrawler:
                 logger.warning("DebugCrawler: failed %s — %s", url, exc)
                 return CrawlNode(url=url, depth=depth, error=str(exc))
 
-        # Recurse into children if we haven't hit max depth
         if depth < self._max_depth:
             child_urls = self._extract_links(response.content, url)
             child_tasks = [
@@ -199,15 +199,9 @@ class DebugCrawler:
 
     def _extract_links(self, html: str, base_url: str) -> list[str]:
         """Extract and filter links from *html*."""
-        soup = BeautifulSoup(html, "lxml")
+        candidates = extract_links(html, base_url, selector=self._link_selector)
         links: list[str] = []
-        for tag in soup.select(self._link_selector):
-            href: str = tag.get("href", "").strip()
-            if not href or href.startswith("#"):
-                continue
-            abs_url = normalise(href, base=base_url)
-            if not is_navigable(abs_url):
-                continue
+        for abs_url in candidates:
             if self._same_origin_only and not same_origin(abs_url, self._start_url):
                 continue
             if abs_url not in self._visited:

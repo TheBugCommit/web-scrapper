@@ -1,16 +1,19 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Switch the active scraper environment by copying the target .env.* file to .env
+    Switch the active scraper environment by copying the target portals/.env.* file to portals/.env
 
 .DESCRIPTION
-    Usage:
-        .\switch-env.ps1 test        # activates .env.test
-        .\switch-env.ps1 production  # activates .env.production
-        .\switch-env.ps1             # shows current active env
+    Usage (from the repo root):
+        .\portals\switch-env.ps1 test        # activates portals/.env.test
+        .\portals\switch-env.ps1 production  # activates portals/.env.production
+        .\portals\switch-env.ps1             # shows current active env
+
+    Or from inside portals/:
+        .\switch-env.ps1 test
 
 .EXAMPLE
-    .\switch-env.ps1 test
+    .\portals\switch-env.ps1 test
 #>
 
 param(
@@ -33,7 +36,7 @@ if (-not $Environment) {
     Write-Host ""
     Write-Host "  Current environment: $(Get-ActiveEnv)" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Usage: .\switch-env.ps1 [test|production]" -ForegroundColor Gray
+    Write-Host "  Usage: .\portals\switch-env.ps1 [test|production]" -ForegroundColor Gray
     Write-Host ""
     exit 0
 }
@@ -51,7 +54,7 @@ Set-Content -Path $Marker -Value $Environment
 
 Write-Host ""
 Write-Host "  Switched to: $Environment" -ForegroundColor Green
-Write-Host "  Active file: .env.$Environment -> .env" -ForegroundColor Gray
+Write-Host "  Active file: portals\.env.$Environment -> portals\.env" -ForegroundColor Gray
 Write-Host ""
 
 # Show a summary of key settings

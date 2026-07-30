@@ -23,18 +23,16 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import sys
+import os
 from datetime import date
 from pathlib import Path
-from typing import Any
-
-# Ensure project root is in sys.path so 'portals' package can be imported directly
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scraper import (
-    EventDispatcher,
     ExcelExtractor,
+    create_default_dispatcher,
+    format_result_summary,
     print_result_summary,
+    register_download_cleanup,
 )
 from scraper.core.engine import ScraperEngine
 from scraper.interaction import (
@@ -44,37 +42,50 @@ from scraper.interaction import (
     SelectAction,
     UncheckAllAction,
 )
-from scraper.utils.logging import configure_logging
+from scraper.utils.logging import get_portal_logger
 from portals.config import PortalConfig, PortalRegistry
 
-registry = PortalRegistry.load()
-portal   = registry.get("messer")
-
 DOWNLOAD_DIR = Path("data") / "messer" / "downloads"
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
 LOG_DIR = Path("data") / "messer" / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-async def get_last_date(portal: PortalConfig) -> date:
-    async with portal.get_repository() as repo:
+
+async def get_last_date(portal: PortalConfig, connection_string: str) -> date:
+    async with portal.get_repository(connection_string) as repo:
         return await repo.get_last_date(
             table=portal.db_table or "Telemetria_Tanque_N",
             date_column="timestamp",
             schema=portal.db_schema or "dbo",
-            default_date=date(2024, 5, 1),
+            default_date=portal.db_default_start_date or date(2024, 5, 1),
         )
 
-async def run_flow() -> None:
-    configure_logging(log_dir=LOG_DIR, debug=False)
-    today = date.today()
-    start = await get_last_date(portal)
 
-    print("=" * 60)
-    print(f"  {portal.name} - XLS Export")
-    print(f"  Portal : {portal.portal_url}")
-    print(f"  Dates  : {start.isoformat()} -> {today.isoformat()}")
-    print("=" * 60)
+async def run_flow() -> None:
+    registry = PortalRegistry.load()
+    portal = registry.get("messer")
+
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    logger = get_portal_logger("messer", LOG_DIR, debug=False)
+
+    connection_string = os.getenv("SCRAPER_DB_CONNECTION_STRING")
+    if not connection_string:
+        raise RuntimeError(
+            "SCRAPER_DB_CONNECTION_STRING is not set in the environment."
+        )
+
+    today = date.today()
+    start = await get_last_date(portal, connection_string)
+
+    logger.info(
+        "%s\n  %s - XLS Export\n  Portal : %s\n  Dates  : %s -> %s\n%s",
+        "=" * 60,
+        portal.name,
+        portal.portal_url,
+        start.isoformat(),
+        today.isoformat(),
+        "=" * 60,
+    )
 
     session = (
         portal.get_builder(portal.extra["export_url"])
@@ -82,14 +93,12 @@ async def run_flow() -> None:
         .with_interaction(
             FormInteractor(
                 actions=[
-                    # Select module "Balfegó" → page auto-submits and reloads
                     SelectAction(
                         "select[name='modul_id']",
                         value=portal.extra["module_id"],
                         auto_submit=True,
                     ),
 
-                    # Fecha inicio (avui − 2 dies)
                     SelectAction("select[name='startDay']",     str(start.day)),
                     SelectAction("select[name='startMonth']",   str(start.month)),
                     SelectAction("select[name='startYear']",    str(start.year)),
@@ -97,7 +106,6 @@ async def run_flow() -> None:
                     SelectAction("select[name='startMinute']",  "0"),
                     SelectAction("select[name='startSeconds']", "0"),
 
-                    # Fecha fin (avui)
                     SelectAction("select[name='endDay']",       str(today.day)),
                     SelectAction("select[name='endMonth']",     str(today.month)),
                     SelectAction("select[name='endYear']",      str(today.year)),
@@ -105,18 +113,15 @@ async def run_flow() -> None:
                     SelectAction("select[name='endMinute']",    "0"),
                     SelectAction("select[name='endSeconds']",   "0"),
 
-                    # Opcions d'exportació
                     SelectAction("select[name='dateTrunc']",        "hour"),  # Elegir fecha → hora
                     SelectAction("select[name='differences']",      "0"),     # Con diferencias → no
                     SelectAction("select[name='ARGOSp']",           "0"),     # Formato Argosp → no
                     SelectAction("select[name='decimalSeparator']", "0"),     # Decimal → coma
 
-                    # Canals: desseleccionar tots, marcar EAN000 + EAN001
                     UncheckAllAction("input[type='checkbox'][name='channelList']"),
                     CheckboxAction("input[name='channelList'][value='EAN000']", checked=True),  # Nivel tanque
                     CheckboxAction("input[name='channelList'][value='EAN001']", checked=True),  # Presion
 
-                    # Submit → descàrrega del fitxer XLS
                     DownloadSubmitAction(
                         selector="input[type='submit'][name='createLink']",
                         download_dir=DOWNLOAD_DIR,
@@ -130,46 +135,19 @@ async def run_flow() -> None:
         .with_extractor(
             ExcelExtractor(columns=["timestamp", "nivel_tanque_pct", "presion_bar"])
         )
-        .with_storage(portal.get_storage())
+        .with_storage(portal.get_storage(connection_string))
         .build()
     )
 
-    dispatcher = EventDispatcher()
-
-    @dispatcher.on("auth.success")
-    def on_auth(payload: dict[str, Any]) -> None:
-        print("  🔐 [Event: auth.success] Autenticació al portal completada amb èxit!")
-
-    @dispatcher.on("file.downloaded")
-    def on_download(payload: dict[str, Any]) -> None:
-        print(
-            f"  📥 [Event: file.downloaded] Fitxer descarregat: {payload['path']} ({payload['size_bytes']} bytes)"
-        )
-
-    @dispatcher.on("storage.saved")
-    def on_saved(payload: dict[str, Any]) -> None:
-        print(
-            f"  🚀 [Event: storage.saved] Desats/upsertats {payload['rows']} registres a SQL Server "
-            f"[{payload['schema']}].[{payload['table']}] (PK: {payload['upsert_key']})!"
-        )
-
-    @dispatcher.on("storage.skipped")
-    def on_skipped(payload: dict[str, Any]) -> None:
-        print(
-            f"  ⚠️ [Event: storage.skipped] Cap registre per desar a [{payload['schema']}].[{payload['table']}] "
-            f"(Motiu: {payload.get('reason')})"
-        )
-
-    @dispatcher.on("storage.error")
-    def on_error(payload: dict[str, Any]) -> None:
-        print(
-            f"  ❌ [Event: storage.error] Error desant a [{payload['schema']}].[{payload['table']}]: {payload['error']}"
-        )
+    dispatcher = create_default_dispatcher(logger)
+    register_download_cleanup(dispatcher, on_events=("storage.saved", "storage.skipped"), logger=logger)
 
     engine = ScraperEngine(session, dispatcher=dispatcher)
     result = await engine.run()
 
-    print_result_summary(result, title=f"{portal.name} - XLS Export")
+    title = f"{portal.name} - XLS Export"
+    print_result_summary(result, title=title)
+    logger.info(format_result_summary(result, title=title))
 
 if __name__ == "__main__":
     asyncio.run(run_flow())

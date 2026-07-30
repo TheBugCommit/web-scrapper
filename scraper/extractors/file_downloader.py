@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Default file extensions considered downloadable
 DEFAULT_EXTENSIONS = {
     ".pdf", ".xlsx", ".xls", ".csv", ".docx", ".doc",
     ".zip", ".tar", ".gz", ".7z", ".rar",
@@ -75,21 +74,13 @@ class FileDownloader(AbstractExtractor):
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
     async def extract(self, page: "PageResponse") -> dict[str, Any]:
-        from bs4 import BeautifulSoup
+        from scraper.utils.url import extract_links
 
-        soup = BeautifulSoup(page.content, "lxml")
         download_dir = self._download_dir or Path("./downloads")
         download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Collect candidate URLs
         candidates: list[str] = []
-        for tag in soup.select(self._link_selector):
-            href: str = tag.get("href", "").strip()
-            if not href:
-                continue
-            # Make absolute
-            from scraper.utils.url import normalise
-            abs_url = normalise(href, base=page.url)
+        for abs_url in extract_links(page.content, page.url, selector=self._link_selector):
             ext = Path(urlparse(abs_url).path).suffix.lower()
 
             if self._extensions and ext not in self._extensions:
@@ -101,7 +92,6 @@ class FileDownloader(AbstractExtractor):
         if not candidates:
             return {"downloaded_files": []}
 
-        # Download concurrently
         tasks = [self._download(url, download_dir) for url in candidates]
         downloaded = await asyncio.gather(*tasks, return_exceptions=True)
 
