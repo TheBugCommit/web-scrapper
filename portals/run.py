@@ -100,9 +100,9 @@ async def main() -> int:
     results = await asyncio.gather(*(run_portal(key) for key in valid_keys))
     success_count = sum(results)
 
-    print("\n" + "═" * 60)
+    print("\n" + "=" * 60)
     print(f"  Resum d'execució: {success_count}/{total} portals completats amb èxit.")
-    print("═" * 60)
+    print("=" * 60)
 
     return 0 if success_count == total else 2
 

@@ -10,6 +10,9 @@ cd /d "%~dp0"
 :: Definir l'entorn com a produccio per defecte quan s'executa via .bat
 set APP_ENV=prod
 
+:: Forçar Python a utilitzar UTF-8 per a l'escriptura del log (evita UnicodeEncodeError amb caràcters especials)
+set PYTHONIOENCODING=utf-8
+
 :: Comprovar que existeix l'entorn virtual
 if not exist ".venv\Scripts\activate.bat" (
     echo [ERROR] No s'ha trobat l'entorn virtual. Executa install.bat primer.
@@ -24,8 +27,8 @@ call .venv\Scripts\activate.bat
 echo [%date% %time%] Iniciant execucio de portals...
 echo [%date% %time%] Iniciant execucio de portals... >> scraper_cron.log
 
-:: Executa l'script, stdout i stderr van al fitxer de log
-python portals/run.py --all >> scraper_cron.log 2>&1
+:: Executa l'script com a mòdul perquè trobi la carpeta portals
+python -m portals.run --all >> scraper_cron.log 2>&1
 
 if %errorlevel% neq 0 (
     echo [%date% %time%] [ERROR] Hi ha hagut problemes durant l'execucio. Revisa scraper_cron.log
@@ -36,4 +39,4 @@ if %errorlevel% neq 0 (
 )
 
 :: Desactivar entorn virtual
-deactivate
+call .venv\Scripts\deactivate.bat
